@@ -1,0 +1,38 @@
+{
+  "name": "tatdma-v5",
+  "private": true,
+  "version": "5.0.0-a",
+  "type": "module",
+  "homepage": "https://dendenpe.github.io/tatdma-v5",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "typecheck": "tsc",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.344.0",
+    "recharts": "^2.12.0",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "jszip": "^3.10.1",
+    "idb": "^8.0.0",
+    "pdfjs-dist": "4.0.379",
+    "tesseract.js": "^5.0.5",
+    "mammoth": "^1.6.0",
+    "xlsx": "^0.18.5",
+    "@google/genai": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.56",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.4",
+    "gh-pages": "^6.1.1"
+  }
+}
