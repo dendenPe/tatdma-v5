@@ -16,13 +16,14 @@ import {
   ReferenceLine
 } from 'recharts';
 import { AppData, DayEntry, Trade } from '../types';
-import { TrendingUp, Clock, Target, Layers, FilterX } from 'lucide-react';
+import { TrendingUp, Clock, Target, Layers, FilterX, CalendarDays } from 'lucide-react';
 
 interface Props {
   data: AppData;
+  onNavigateToCalendar?: (dateStr: string) => void;
 }
 
-const StatisticsView: React.FC<Props> = ({ data }) => {
+const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
   // 1. STRICT DATA FILTERING
   // Filtert ungültige Datums-Keys (z.B. Import-Fehler, leere Strings, Jahr < 2020).
   // Verwendet exakt die gleichen Daten wie der Kalender.
@@ -48,7 +49,7 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
       return true;
   }) as [string, DayEntry][];
   
-  // Sortierung: Chronologisch aufsteigend für korrekte Equity Curve
+  // Sortierung: Chronologisch aufsteigend
   validTradeEntries.sort((a, b) => a[0].localeCompare(b[0]));
 
   const allTrades: (Trade & { date: string })[] = [];
@@ -61,10 +62,8 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
     }
   });
 
-  // 2. CHART DATA PREPARATION
-  // WICHTIG: Wir nutzen hier 'entry.total' (wie im Kalender), anstatt die Trades neu zu summieren.
+  // 2. CHART DATA PREPARATION (DAILY)
   const tradeData = validTradeEntries.map(([date, entry]) => {
-    
     // Display Date Format (dd.mm.yy)
     const dObj = new Date(date);
     const displayDate = !isNaN(dObj.getTime()) 
@@ -79,8 +78,32 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
     };
   });
 
-  // 3. EQUITY CURVE (Kumuliert)
-  // Beginnt bei 0 am ersten validen Tag
+  // 3. CHART DATA PREPARATION (MONTHLY) - NEW
+  const monthlyAgg: Record<string, number> = {};
+  
+  validTradeEntries.forEach(([date, entry]) => {
+      // Key format: "YYYY-MM"
+      const monthKey = date.substring(0, 7); 
+      monthlyAgg[monthKey] = (monthlyAgg[monthKey] || 0) + (Number(entry.total) || 0);
+  });
+
+  // Convert to Array & Sort
+  const monthlyData = Object.entries(monthlyAgg).map(([key, val]) => {
+      // Key is YYYY-MM
+      const [y, m] = key.split('-');
+      // Create date object for display formatting (use 1st of month)
+      const d = new Date(parseInt(y), parseInt(m)-1, 1);
+      
+      return {
+          monthKey: key, // "2025-12"
+          display: d.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' }), // "Dez 25"
+          fullDate: `${key}-01`, // Target for navigation
+          pnl: val
+      };
+  }).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+
+  // 4. EQUITY CURVE (Kumuliert)
   let runningTotal = 0;
   const equityCurveData = tradeData.map(day => {
       runningTotal += day.pnl;
@@ -90,8 +113,7 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
       };
   });
 
-  // 4. METRICS
-  // Strategie Auswertung basiert weiterhin auf Einzeltrades
+  // 5. METRICS
   const strategyStats = allTrades.reduce((acc: any, t) => {
     const strat = t.strategy || 'Unbekannt';
     if (!acc[strat]) acc[strat] = { name: strat, count: 0, pnl: 0 };
@@ -116,13 +138,21 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
     ? allTrades.reduce((sum, t) => sum + calculateDuration(t.start, t.end), 0) / allTrades.length 
     : 0;
 
-  // Total PnL (Summe der validen Tage)
   const totalPnL = tradeData.reduce((s, d) => s + d.pnl, 0);
   
-  // Win Rate (basierend auf Einzeltrades, da genauer für Performance)
   const winRate = allTrades.length > 0 
     ? (allTrades.filter(t => (t.pnl || 0) > 0).length / allTrades.length * 100).toFixed(1) 
     : 0;
+
+  // Chart Interaction Handlers
+  const handleMonthClick = (data: any) => {
+      if (data && data.activePayload && data.activePayload.length > 0) {
+          const payload = data.activePayload[0].payload;
+          if (payload && payload.fullDate && onNavigateToCalendar) {
+              onNavigateToCalendar(payload.fullDate);
+          }
+      }
+  };
 
   if (tradeData.length === 0) {
       return (
@@ -156,6 +186,42 @@ const StatisticsView: React.FC<Props> = ({ data }) => {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* NEW: Monthly Performance Chart */}
+      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <CalendarDays size={14} className="text-blue-500" /> Monatsabschlüsse
+              </h4>
+              <span className="text-[10px] text-gray-400 italic">Klicke auf einen Monat, um zum Kalender zu springen</span>
+          </div>
+          <div className="h-[250px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthlyData} onClick={handleMonthClick} className="cursor-pointer">
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis 
+                    dataKey="display" 
+                    fontSize={10} 
+                    axisLine={false} 
+                    tickLine={false} 
+                />
+                <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                <Tooltip 
+                    cursor={{fill: '#f3f4f6'}}
+                    formatter={(value: number) => [`${value.toFixed(2)} $`, 'PnL']}
+                    labelFormatter={(label) => `Monat: ${label}`}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                />
+                <ReferenceLine y={0} stroke="#e5e7eb" />
+                <Bar dataKey="pnl" radius={[4, 4, 4, 4]} barSize={40}>
+                  {monthlyData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#f87171'} className="hover:opacity-80 transition-opacity" />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

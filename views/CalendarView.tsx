@@ -23,14 +23,22 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 interface Props {
   data: AppData;
   onUpdate: (data: AppData) => void;
+  targetDate?: Date | null; // NEW: Prop to jump to a specific date
 }
 
-const CalendarView: React.FC<Props> = ({ data, onUpdate }) => {
+const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [screenshotPreviews, setScreenshotPreviews] = useState<Record<string, string>>({});
   const widgetRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Effect to react to navigation from other tabs (like Statistics)
+  useEffect(() => {
+      if (targetDate) {
+          setCurrentDate(new Date(targetDate));
+      }
+  }, [targetDate]);
 
   useEffect(() => {
     if (widgetRef.current) {

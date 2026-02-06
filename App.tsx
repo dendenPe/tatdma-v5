@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
@@ -55,6 +54,9 @@ const App: React.FC = () => {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  
+  // Navigation State for Stats -> Calendar jump
+  const [calendarTargetDate, setCalendarTargetDate] = useState<Date | null>(null);
   
   // API Key State
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -126,16 +128,22 @@ const App: React.FC = () => {
       }
   };
 
+  // Helper to jump from Stats to Calendar
+  const handleNavigateToCalendar = (dateStr: string) => {
+      setCalendarTargetDate(new Date(dateStr));
+      setActiveTab('calendar');
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={setActiveTab} />;
       case 'trading': return <TradingView data={data} onUpdate={saveToLocalStorage} />;
-      case 'calendar': return <CalendarView data={data} onUpdate={saveToLocalStorage} />;
+      case 'calendar': return <CalendarView data={data} onUpdate={saveToLocalStorage} targetDate={calendarTargetDate} />;
       case 'holdings': return <HoldingsView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'salary': return <SalaryView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'tax': return <TaxView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'notes': return <NotesView data={data} onUpdate={saveToLocalStorage} />;
-      case 'stats': return <StatisticsView data={data} />;
+      case 'stats': return <StatisticsView data={data} onNavigateToCalendar={handleNavigateToCalendar} />;
       case 'system': return <SystemView data={data} onUpdate={saveToLocalStorage} />;
       default: return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={setActiveTab} />;
     }
