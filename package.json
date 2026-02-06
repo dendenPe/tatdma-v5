@@ -1,3 +1,4 @@
+
 {
   "name": "tatdma-v5",
   "private": true,
@@ -25,7 +26,8 @@
     "tesseract.js": "^5.0.5",
     "mammoth": "^1.6.0",
     "xlsx": "^0.18.5",
-    "@google/genai": "*"
+    "@google/genai": "*",
+    "heic2any": "^0.0.4"
   },
   "devDependencies": {
     "@types/react": "^18.2.56",

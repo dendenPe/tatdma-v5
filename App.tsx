@@ -17,7 +17,8 @@ import {
   PieChart,
   PanelLeftClose,
   PanelLeftOpen,
-  Key
+  Key,
+  CreditCard // New Icon for Expenses Tab
 } from 'lucide-react';
 import { AppData, APP_VERSION } from './types';
 import { VaultService } from './services/vaultService';
@@ -30,6 +31,7 @@ import StatisticsView from './views/StatisticsView';
 import SystemView from './views/SystemView';
 import NotesView from './views/NotesView';
 import DashboardView from './views/DashboardView';
+import ExpensesView from './views/ExpensesView'; // IMPORT
 
 const INITIAL_DATA: AppData = {
   trades: {},
@@ -44,7 +46,8 @@ const INITIAL_DATA: AppData = {
   },
   currentPortfolioId: 'portfolio_1',
   notes: {},
-  categoryRules: {}
+  categoryRules: {},
+  dailyExpenses: {} // INIT NEW FIELD
 };
 
 const App: React.FC = () => {
@@ -84,7 +87,8 @@ const App: React.FC = () => {
           tax: { ...prev.tax, ...(parsed.tax || {}) },
           portfolios: parsed.portfolios || prev.portfolios,
           notes: parsed.notes || prev.notes,
-          categoryRules: parsed.categoryRules || prev.categoryRules
+          categoryRules: parsed.categoryRules || prev.categoryRules,
+          dailyExpenses: parsed.dailyExpenses || prev.dailyExpenses || {} // Merge new field
         }));
       } catch (e) {
         console.error("Data corruption detected", e);
@@ -142,6 +146,7 @@ const App: React.FC = () => {
       case 'holdings': return <HoldingsView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'salary': return <SalaryView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'tax': return <TaxView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
+      case 'expenses': return <ExpensesView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />; // NEW
       case 'notes': return <NotesView data={data} onUpdate={saveToLocalStorage} />;
       case 'stats': return <StatisticsView data={data} onNavigateToCalendar={handleNavigateToCalendar} />;
       case 'system': return <SystemView data={data} onUpdate={saveToLocalStorage} />;
@@ -151,6 +156,7 @@ const App: React.FC = () => {
 
   const navItems = [
     { id: 'dashboard', label: 'Cockpit', icon: PieChart },
+    { id: 'expenses', label: 'Ausgaben', icon: CreditCard }, // NEW TAB
     { id: 'trading', label: 'Trading', icon: LayoutDashboard },
     { id: 'calendar', label: 'Kalender', icon: CalendarIcon },
     { id: 'holdings', label: 'Wertpapiere', icon: Wallet },
@@ -163,7 +169,7 @@ const App: React.FC = () => {
 
   const currentYearNum = new Date().getFullYear();
   const availableYears = Array.from({ length: Math.max(2026 - 2023 + 1, currentYearNum - 2023 + 2) }, (_, i) => (2023 + i).toString());
-  const showGlobalYearSelector = ['holdings', 'salary', 'tax'].includes(activeTab);
+  const showGlobalYearSelector = ['holdings', 'salary', 'tax', 'expenses'].includes(activeTab); // Added expenses
 
   const handleTabChange = (id: string) => {
     setActiveTab(id);

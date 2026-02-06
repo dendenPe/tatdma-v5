@@ -1,5 +1,4 @@
 
-
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
 import { createWorker } from 'tesseract.js';
@@ -9,7 +8,7 @@ import * as mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
-import { NoteDocument, DocCategory, AppData, TaxExpense } from '../types';
+import { NoteDocument, DocCategory, AppData, TaxExpense, ExpenseEntry } from '../types';
 import { VaultService } from './vaultService';
 import { DBService } from './dbService';
 import { GeminiService } from './geminiService';
@@ -17,11 +16,6 @@ import { GeminiService } from './geminiService';
 // Set Worker manually for vite/browser environment
 // @ts-ignore
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
-
-interface ScoredCandidate {
-    val: number;
-    score: number;
-}
 
 export class DocumentService {
 
@@ -44,170 +38,16 @@ export class DocumentService {
     'software': 'Technik & IT', 'lizenz': 'Technik & IT', 'handbuch': 'Technik & IT', 'anleitung': 'Technik & IT', 'passwort': 'Technik & IT'
   };
 
-  /**
-   * LOCAL AI SIMULATION v4 (Scoring System)
-   * Highly robust parsing using a weighted scoring algorithm to find the correct amount.
-   */
-  static parseReceiptContent(text: string): { amount?: number, date?: string, category?: string, desc?: string, currency?: string } {
-      const result: any = { currency: 'CHF' }; // Default
-      const lines = text.split(/\r?\n/);
-      const lowerText = text.toLowerCase();
-
-      // --- 1. CATEGORY & DESCRIPTION ---
-      let bestCat = 'Sonstiges';
-      let maxScore = 0;
-      let detectedDesc = '';
-
-      for (const [keyword, cat] of Object.entries(this.defaultRules)) {
-          if (lowerText.includes(keyword)) {
-              if (keyword.length > maxScore) { 
-                  maxScore = keyword.length;
-                  bestCat = cat;
-                  detectedDesc = keyword.charAt(0).toUpperCase() + keyword.slice(1);
-              }
-          }
-      }
-      
-      if (lowerText.includes('helsana') || lowerText.includes('swica')) { detectedDesc = 'Krankenkasse Prämie'; result.category = 'Versicherungen'; } // Updated cat
-      else if (lowerText.includes('sbb') || lowerText.includes('ticket')) { detectedDesc = 'Reisekosten'; result.category = 'Fahrzeuge & Mobilität'; } // Updated cat
-      else if (bestCat !== 'Sonstiges') { result.category = bestCat; result.desc = detectedDesc; }
-      else { result.category = 'Sonstiges'; result.desc = 'Beleg'; }
-
-      // --- 2. DATE EXTRACTION ---
-      const dateRegex = /(\d{2})\.(\d{2})\.(\d{4})|(\d{4})-(\d{2})-(\d{2})/;
-      for (let i = 0; i < Math.min(lines.length, 25); i++) {
-          const match = lines[i].match(dateRegex);
-          if (match) {
-              if (match[1]) result.date = `${match[3]}-${match[2]}-${match[1]}`; 
-              else result.date = match[0];
-              break; 
-          }
-      }
-
-      // --- 3. CURRENCY DETECTION (GLOBAL) ---
-      let countEUR = (text.match(/EUR|€/gi) || []).length;
-      let countCHF = (text.match(/CHF|Fr\./gi) || []).length;
-      let countUSD = (text.match(/USD|\$/gi) || []).length;
-      
-      if (text.includes('Deutschland') || text.includes('Germany')) countEUR += 2;
-      if (text.includes('Schweiz') || text.includes('Switzerland')) countCHF += 1;
-
-      if (countEUR > countCHF && countEUR > countUSD) result.currency = 'EUR';
-      else if (countUSD > countCHF && countUSD > countEUR) result.currency = 'USD';
-      else result.currency = 'CHF';
-
-      // --- 4. AMOUNT SCORING ENGINE ---
-      const candidates: ScoredCandidate[] = [];
-      const alimonyCandidates: number[] = []; // Simple list for Summation Logic
-
-      const amountRegex = /([0-9']{1,3}(?:[']?[0-9]{3})*(?:[.,]\d{2})?)/g;
-
-      for (const line of lines) {
-          const cleanLine = line.trim();
-          if (!cleanLine) continue;
-
-          // POISON PILL: Skip lines with IDs, Phones, IBANs
-          if (/IBAN|BIC|SWIFT|Konto|Account|Telefon|Tel\.|Fax|HRB|UID|Steuer-Nr|St-Nr|Matrikel|PLZ|Zip/i.test(cleanLine)) continue;
-
-          const isTotalLine = /total|summe|betrag|amount|netto|zahlbar|überweisen/i.test(cleanLine);
-          const hasCurrencyContext = /CHF|Fr\.|EUR|€|\$|USD/.test(cleanLine);
-          
-          // Line-specific currency override (strong signal)
-          if (isTotalLine && hasCurrencyContext) {
-             if (/EUR|€/.test(cleanLine)) result.currency = 'EUR';
-             else if (/CHF|Fr\./.test(cleanLine)) result.currency = 'CHF';
-             else if (/USD|\$/.test(cleanLine)) result.currency = 'USD';
-          }
-
-          let match;
-          while ((match = amountRegex.exec(cleanLine)) !== null) {
-              const matchText = match[1];
-              const matchIndex = match.index;
-              
-              // Boundary Check: Ensure not part of alphanum code
-              if (matchIndex > 0 && /[a-zA-Z]/.test(cleanLine[matchIndex - 1])) continue;
-              if (matchIndex + matchText.length < cleanLine.length && /[a-zA-Z]/.test(cleanLine[matchIndex + matchText.length])) continue;
-
-              // Normalize
-              let raw = matchText.replace(/'/g, '');
-              // German logic: 1.200,50 -> 1200.50
-              if (raw.includes(',') && !raw.includes('.')) raw = raw.replace(',', '.');
-              else if (raw.includes('.') && raw.includes(',')) {
-                  if (raw.lastIndexOf(',') > raw.lastIndexOf('.')) raw = raw.replace(/\./g, '').replace(',', '.'); 
-                  else raw = raw.replace(/,/g, ''); 
-              }
-              
-              const val = parseFloat(raw);
-              
-              if (!isNaN(val)) {
-                  const isInteger = Math.floor(val) === val;
-                  
-                  // FILTER: Large Integers without Currency Context (HRB Numbers, IDs, etc)
-                  if (val > 2500 && isInteger && !hasCurrencyContext && !isTotalLine) continue;
-                  
-                  // FILTER: Years (1990-2030)
-                  const looksLikeYear = val >= 1990 && val <= 2030 && isInteger;
-                  if (looksLikeYear && !hasCurrencyContext) continue;
-
-                  // FILTER: Garbage values
-                  if (val < 1) continue; 
-
-                  alimonyCandidates.push(val);
-
-                  // SCORING
-                  let score = 1; 
-                  if (hasCurrencyContext) score += 5;
-                  if (isTotalLine) score += 10;
-                  if (!isInteger) score += 2; // Decimals prefered for amounts
-                  if (isInteger && val > 2000) score -= 5; // Large integers penalized
-
-                  // Position Bonus: Numbers lower in the document often Total
-                  // (Not implemented here to keep simple, but TotalLine handles most)
-
-                  candidates.push({ val, score });
-              }
-          }
-      }
-
-      // --- 5. DECISION LOGIC ---
-      
-      // A. Special Case: Alimony Summation (Check new categories if needed, but Alimente is specific logic)
-      if (text.toLowerCase().includes('alimente') && alimonyCandidates.length > 1) {
-          const sum = alimonyCandidates.reduce((a, b) => a + b, 0);
-          const max = Math.max(...alimonyCandidates);
-          
-          if (sum > max * 1.5) {
-              result.amount = sum;
-              result.desc += ' (Summiert)';
-              return result;
-          }
-      }
-
-      // B. Standard Scoring
-      if (candidates.length > 0) {
-          // Sort by Score DESC, then Value DESC
-          candidates.sort((a, b) => {
-              if (b.score !== a.score) return b.score - a.score;
-              return b.val - a.val;
-          });
-          result.amount = candidates[0].val;
-      } else {
-          result.amount = 0;
-      }
-
-      return result;
-  }
-
   static async performOCR(blob: Blob): Promise<string> {
       try {
-          console.log("Starte OCR...");
           const worker = await createWorker('deu'); 
           const ret = await worker.recognize(blob);
           await worker.terminate();
           return ret.data.text;
-      } catch (e) {
-          console.error("OCR Fehler:", e);
-          return "";
+      } catch (e) { 
+          // Tesseract fails on HEIC usually or corrupted images
+          console.warn("OCR failed (possibly unsupported format like HEIC in this browser):", e);
+          return ""; 
       }
   }
 
@@ -249,6 +89,8 @@ export class DocumentService {
       const pdf = await loadingTask.promise;
       let fullText = '';
       const maxPages = Math.min(pdf.numPages, 3); 
+      
+      // 1. Try standard text extraction
       for (let i = 1; i <= maxPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
@@ -256,26 +98,44 @@ export class DocumentService {
         const pageText = textContent.items.map(item => item.str).join(' '); 
         fullText += pageText + '\n'; 
       }
-      
-      // If PDF text layer is empty (scanned PDF), try OCR
+
+      // 2. If text is extremely short (e.g. Scanned PDF / Image in PDF), try OCR on the first page
       if (fullText.trim().length < 50) {
-          const page = await pdf.getPage(1);
-          const viewport = page.getViewport({ scale: 2.0 });
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          if (context) {
+          console.log("PDF text empty, attempting OCR on PDF Page 1...");
+          try {
+              const page = await pdf.getPage(1);
+              const viewport = page.getViewport({ scale: 2.0 }); // High res for OCR
+              const canvas = document.createElement('canvas');
+              const context = canvas.getContext('2d');
               canvas.height = viewport.height;
               canvas.width = viewport.width;
-              await page.render({ canvasContext: context, viewport: viewport } as any).promise;
-              const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
-              if (blob) {
-                  const ocrText = await this.performOCR(blob);
-                  fullText += "\n[OCR RESULT]\n" + ocrText;
+
+              if (context) {
+                  // @ts-ignore
+                  await page.render({ canvasContext: context, viewport: viewport }).promise;
+                  
+                  // Convert canvas to blob for OCR
+                  const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+                  if (blob) {
+                      const ocrText = await this.performOCR(blob);
+                      fullText += "\n[OCR Extracted]:\n" + ocrText;
+                  }
               }
+          } catch (ocrErr) {
+              console.warn("PDF OCR Fallback failed", ocrErr);
           }
       }
+
       return fullText;
-    } catch (e) { return ""; }
+    } catch (e) { 
+        console.error("PDF extract error", e);
+        return ""; 
+    }
+  }
+
+  static extractYear(text: string): string {
+    const simpleYear = text.match(/(202[0-9])/);
+    return simpleYear ? simpleYear[0] : new Date().getFullYear().toString();
   }
 
   static categorizeText(text: string, filename: string, userRules: Record<string, string[]> = {}): DocCategory {
@@ -299,37 +159,36 @@ export class DocumentService {
     return bestCat;
   }
 
-  static extractYear(text: string): string {
-    const simpleYear = text.match(/(202[0-9])/);
-    return simpleYear ? simpleYear[0] : new Date().getFullYear().toString();
-  }
-
   static async processFile(file: File | Blob, userRules: Record<string, string[]> = {}, fileNameOverride?: string, forcedMetadata?: { year?: string, category?: string }): Promise<NoteDocument> {
     const name = fileNameOverride || (file as File).name || 'Unknown';
     const ext = name.split('.').pop()?.toLowerCase() || '';
     let content = "";
     let docType: NoteDocument['type'] = 'other';
+    
+    // Explicit Type Check or Ext Check
+    const type = file.type || '';
 
-    if (file.type === 'application/pdf' || ext === 'pdf') {
+    // Improved Type Detection with fallback for empty MIME types (HEIC)
+    if (type === 'application/pdf' || ext === 'pdf') {
         docType = 'pdf';
         content = await this.extractTextFromPdf(file);
     } 
-    else if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'heic'].includes(ext)) {
+    else if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'heic', 'webp', 'heif'].includes(ext)) {
         docType = 'image';
+        // Only attempt OCR if not HEIC, or if browser supports it. 
+        // We wrap in try/catch in performOCR anyway.
         content = await this.performOCR(file);
+        if (!content && (ext === 'heic' || ext === 'heif')) {
+            content = "[HEIC Image - Inhalt nur via AI sichtbar]";
+        }
     }
-    else if (['doc', 'docx'].includes(ext)) {
+    else if (['doc', 'docx'].includes(ext) || type.includes('word')) {
         docType = 'word';
         content = await this.extractTextFromWord(file);
-        if (!content) content = name;
     }
-    else if (['xls', 'xlsx', 'csv'].includes(ext)) {
+    else if (['xls', 'xlsx', 'csv'].includes(ext) || type.includes('spreadsheet') || type.includes('excel')) {
         docType = 'excel';
         content = await this.extractTextFromExcel(file);
-        if (!content) content = name;
-    }
-    else if (['pages'].includes(ext)) {
-        docType = 'word'; content = `Apple Pages: ${name}`;
     }
     else if (['txt', 'md', 'json', 'log'].includes(ext)) {
         docType = 'note';
@@ -346,7 +205,7 @@ export class DocumentService {
         title: name,
         type: docType,
         category,
-        subCategory: undefined, // Default no subcat for regex based
+        subCategory: undefined,
         year,
         created: new Date().toISOString(),
         content: content,
@@ -387,11 +246,6 @@ export class DocumentService {
              const lowerP = p.toLowerCase();
              const knownCats = Object.values(this.defaultRules);
              if (knownCats.includes(p)) foundCat = p;
-             if (!foundCat) {
-                 for(const [key, val] of Object.entries(this.defaultRules)) {
-                     if (lowerP.includes(key)) { foundCat = val; break; }
-                 }
-             }
           }
           if (foundYear || foundCat) forcedMetadata = { year: foundYear, category: foundCat };
 
@@ -405,11 +259,10 @@ export class DocumentService {
       return docs;
   }
 
-  // --- UPDATED SCAN INBOX WITH SUB-CATEGORIES ---
   static async scanInbox(
       currentNotes: Record<string, NoteDocument>, 
       userRules: Record<string, string[]> = {}
-  ): Promise<{ newDocs: NoteDocument[], movedCount: number, newTaxExpenses: TaxExpense[] }> {
+  ): Promise<{ newDocs: NoteDocument[], movedCount: number, newTaxExpenses: TaxExpense[], newDailyExpenses: ExpenseEntry[] }> {
     
     if (!VaultService.isConnected()) throw new Error("Vault not connected");
     const root = await VaultService.getDirHandle();
@@ -422,6 +275,7 @@ export class DocumentService {
 
     const newDocs: NoteDocument[] = [];
     const newTaxExpenses: TaxExpense[] = [];
+    const newDailyExpenses: ExpenseEntry[] = [];
     let movedCount = 0;
 
     // @ts-ignore
@@ -429,30 +283,35 @@ export class DocumentService {
         if (entry.kind === 'file' && entry.name !== '.DS_Store') {
             const fileHandle = entry as FileSystemFileHandle;
             const file = await fileHandle.getFile();
-            if (file.size > 50 * 1024 * 1024) continue; // Skip large files
+            if (file.size > 50 * 1024 * 1024) continue;
 
             try {
                 // 1. ANALYZE WITH GEMINI
                 const aiResult = await GeminiService.analyzeDocument(file);
                 
-                // Fallback vars
                 let finalDoc: NoteDocument;
                 let finalCategory: string;
                 let finalSubCategory: string | undefined;
                 let finalYear: string;
 
                 if (aiResult) {
-                    // AI SUCCESS
                     finalCategory = aiResult.category || 'Sonstiges';
-                    finalSubCategory = aiResult.subCategory; // New field from Gemini
+                    finalSubCategory = aiResult.subCategory; 
                     finalYear = aiResult.date ? aiResult.date.split('-')[0] : new Date().getFullYear().toString();
                     
                     const id = `doc_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
                     
+                    // Determine Type manually if file.type is empty (HEIC fix)
+                    let docType: NoteDocument['type'] = 'other';
+                    const ext = file.name.split('.').pop()?.toLowerCase();
+                    const mime = file.type || '';
+                    if (mime.includes('pdf') || ext === 'pdf') docType = 'pdf';
+                    else if (mime.startsWith('image/') || ['jpg','jpeg','png','heic','webp','heif'].includes(ext || '')) docType = 'image';
+
                     finalDoc = {
                         id,
                         title: aiResult.title || file.name,
-                        type: (file.type.startsWith('image') || file.type.includes('pdf')) ? (file.type.includes('pdf') ? 'pdf' : 'image') : 'other',
+                        type: docType,
                         category: finalCategory,
                         subCategory: finalSubCategory,
                         year: finalYear,
@@ -464,11 +323,28 @@ export class DocumentService {
                         taxRelevant: aiResult.isTaxRelevant
                     };
 
-                    // Handle Tax Relevance
-                    if (aiResult.isTaxRelevant && aiResult.taxData) {
-                        const dbId = `receipt_auto_${Date.now()}`;
-                        await DBService.saveFile(dbId, file);
+                    const dbId = `receipt_auto_${Date.now()}`;
+                    await DBService.saveFile(dbId, file);
 
+                    if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
+                        const expense = aiResult.dailyExpenseData;
+                        newDailyExpenses.push({
+                            id: `expense_${Date.now()}`,
+                            date: aiResult.date || new Date().toISOString().split('T')[0],
+                            merchant: expense.merchant || 'Unbekannt',
+                            description: aiResult.title,
+                            amount: expense.amount || 0,
+                            currency: expense.currency || 'CHF',
+                            rate: 1, 
+                            category: (expense.expenseCategory as any) || 'Sonstiges',
+                            location: expense.location,
+                            receiptId: dbId,
+                            isTaxRelevant: aiResult.isTaxRelevant,
+                            items: expense.items // PASS THE EXTRACTED ITEMS
+                        });
+                    }
+
+                    if (aiResult.isTaxRelevant && aiResult.taxData) {
                         newTaxExpenses.push({
                             desc: aiResult.title || file.name,
                             amount: aiResult.taxData.amount || 0,
@@ -482,21 +358,18 @@ export class DocumentService {
                     }
 
                 } else {
-                    // AI FALLBACK (Regex)
                     finalDoc = await this.processFile(file, userRules);
                     finalCategory = finalDoc.category;
                     finalYear = finalDoc.year;
                     finalSubCategory = undefined;
                 }
 
-                // 2. MOVE FILE IN VAULT WITH SUB-FOLDER
                 // @ts-ignore
                 const yearDir = await archiveHandle.getDirectoryHandle(finalYear, { create: true });
                 // @ts-ignore
                 const catDir = await yearDir.getDirectoryHandle(finalCategory, { create: true });
                 
                 let targetDir = catDir;
-                // Create subfolder if needed
                 if (finalSubCategory) {
                     // @ts-ignore
                     targetDir = await catDir.getDirectoryHandle(finalSubCategory, { create: true });
@@ -511,7 +384,6 @@ export class DocumentService {
                 // @ts-ignore
                 await inboxHandle.removeEntry(file.name);
 
-                // Build Path
                 const subPath = finalSubCategory ? `${finalSubCategory}/${file.name}` : file.name;
                 finalDoc.filePath = `_ARCHIVE/${finalYear}/${finalCategory}/${subPath}`;
                 
@@ -523,174 +395,133 @@ export class DocumentService {
             }
         }
     }
-    return { newDocs, movedCount, newTaxExpenses };
+    return { newDocs, movedCount, newTaxExpenses, newDailyExpenses };
   }
 
-  // --- RECURSIVE REINDEX TO SUPPORT SUBFOLDERS ---
-  static async rebuildIndexFromVault(): Promise<NoteDocument[]> {
-    if (!VaultService.isConnected()) throw new Error("Vault not connected");
-    const root = await VaultService.getDirHandle();
-    if (!root) throw new Error("No Vault Root");
+  // --- IMPLEMENTED: REBUILD INDEX & GET FILE FROM VAULT ---
 
-    const recoveredDocs: NoteDocument[] = [];
-    
-    // Process a specific directory, looking for files
-    const processDirectory = async (dirHandle: FileSystemDirectoryHandle, year: string, category: string, subCategory?: string) => {
-         // @ts-ignore
-         for await (const entry of dirHandle.values()) {
-             if (entry.kind === 'file' && entry.name !== '.DS_Store') {
+  static async rebuildIndexFromVault(): Promise<NoteDocument[]> {
+      if (!VaultService.isConnected()) return [];
+      const root = await VaultService.getDirHandle();
+      if (!root) return [];
+
+      const docs: NoteDocument[] = [];
+      // @ts-ignore
+      const archiveHandle = await root.getDirectoryHandle('_ARCHIVE', { create: true });
+
+      // Recursive scanner
+      const scanDir = async (dirHandle: FileSystemDirectoryHandle, pathPrefix: string, year: string, category: string, subCategory?: string) => {
+          // @ts-ignore
+          for await (const entry of dirHandle.values()) {
+              if (entry.kind === 'file' && entry.name !== '.DS_Store') {
                   const fileHandle = entry as FileSystemFileHandle;
                   const file = await fileHandle.getFile();
-                  const ext = file.name.split('.').pop()?.toLowerCase() || '';
                   
-                  let docType: NoteDocument['type'] = 'other';
-                  if (['pdf'].includes(ext)) docType = 'pdf';
-                  else if (['jpg','jpeg','png','heic'].includes(ext)) docType = 'image';
-                  else if (['doc','docx'].includes(ext)) docType = 'word';
-                  else if (['xls','xlsx','csv'].includes(ext)) docType = 'excel';
-                  else if (['txt','md'].includes(ext)) docType = 'note';
-
-                  let content = "";
-                  try {
-                      if (docType === 'word') content = await this.extractTextFromWord(file);
-                      else if (docType === 'excel') content = await this.extractTextFromExcel(file);
-                      else if (docType === 'pdf') content = await this.extractTextFromPdf(file);
-                  } catch (e) {}
-                  if (!content || content.length < 5) content = `Datei: ${file.name}`;
-
-                  const idPart = subCategory ? `${category}_${subCategory}` : category;
-                  const id = `rec_${year}_${idPart}_${file.name.replace(/\W/g,'')}`;
+                  // Re-process metadata without OCR if possible for speed
+                  const forcedMeta = { year, category };
+                  const doc = await this.processFile(file, {}, file.name, forcedMeta);
                   
-                  const subPath = subCategory ? `${subCategory}/${file.name}` : file.name;
+                  doc.subCategory = subCategory;
+                  doc.filePath = `${pathPrefix}/${file.name}`;
+                  docs.push(doc);
+              } else if (entry.kind === 'directory') {
+                  // Traverse deeper
+                  // Structure: _ARCHIVE / YEAR / CAT / [SUBCAT]
+                  // If we are at root archive, entry is YEAR
+                  // @ts-ignore
+                  const dirEntry = entry as FileSystemDirectoryHandle;
+                  if (pathPrefix === '_ARCHIVE') {
+                      await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, entry.name, 'Sonstiges');
+                  } else if (pathPrefix.split('/').length === 2) {
+                      // Inside Year, entry is CAT
+                      await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, year, entry.name);
+                  } else if (pathPrefix.split('/').length === 3) {
+                      // Inside Cat, entry is SUBCAT
+                      await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, year, category, entry.name);
+                  }
+              }
+          }
+      };
 
-                  recoveredDocs.push({
-                      id, title: file.name, type: docType, category, subCategory, year,
-                      created: new Date(file.lastModified).toISOString(), content,
-                      fileName: file.name, filePath: `_ARCHIVE/${year}/${category}/${subPath}`,
-                      tags: [], isNew: false
-                  });
-             }
-         }
-    };
-
-    try {
-        // @ts-ignore
-        const archiveHandle = await root.getDirectoryHandle('_ARCHIVE');
-        // @ts-ignore
-        for await (const yearEntry of archiveHandle.values()) {
-            if (yearEntry.kind === 'directory') {
-                const year = yearEntry.name;
-                const yearHandle = yearEntry as FileSystemDirectoryHandle;
-                
-                // @ts-ignore
-                for await (const catEntry of yearHandle.values()) {
-                    if (catEntry.kind === 'directory') {
-                        const category = catEntry.name as DocCategory;
-                        const catHandle = catEntry as FileSystemDirectoryHandle;
-                        
-                        // 1. Process Files directly in Category Folder (Legacy/Standard)
-                        await processDirectory(catHandle, year, category, undefined);
-
-                        // 2. Check for Sub-Directories (New Structure)
-                        // @ts-ignore
-                        for await (const subEntry of catHandle.values()) {
-                            if (subEntry.kind === 'directory') {
-                                const subCat = subEntry.name;
-                                const subHandle = subEntry as FileSystemDirectoryHandle;
-                                await processDirectory(subHandle, year, category, subCat);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } catch (e) {}
-    return recoveredDocs;
+      await scanDir(archiveHandle, '_ARCHIVE', '2025', 'Sonstiges');
+      return docs;
   }
 
-  // --- UPDATED MOVE FILE TO SUPPORT SUBFOLDERS ---
   static async moveFile(doc: NoteDocument, newCategory: DocCategory, newSubCategory?: string): Promise<NoteDocument> {
-      if (!VaultService.isConnected() || !doc.filePath) return { ...doc, category: newCategory, subCategory: newSubCategory };
+      if (!VaultService.isConnected() || !doc.filePath) return doc;
       
-      // If nothing changed, return
-      if (doc.category === newCategory && doc.subCategory === newSubCategory) return doc; 
+      const fileBlob = await this.getFileFromVault(doc.filePath);
+      if (!fileBlob) throw new Error("Quelldatei nicht gefunden");
+
+      const root = await VaultService.getDirHandle();
+      // @ts-ignore
+      const archiveHandle = await root!.getDirectoryHandle('_ARCHIVE', { create: true });
+      // @ts-ignore
+      const yearDir = await archiveHandle.getDirectoryHandle(doc.year, { create: true });
+      // @ts-ignore
+      const newCatDir = await yearDir.getDirectoryHandle(newCategory, { create: true });
       
-      try {
-          const root = await VaultService.getDirHandle();
-          if(!root) throw new Error("No Vault");
-          const oldBlob = await this.getFileFromVault(doc.filePath);
-          if (!oldBlob) throw new Error("Quelldatei nicht gefunden");
-          
+      let targetDir = newCatDir;
+      if (newSubCategory) {
           // @ts-ignore
-          const archiveHandle = await root.getDirectoryHandle('_ARCHIVE');
-          // @ts-ignore
-          const yearHandle = await archiveHandle.getDirectoryHandle(doc.year, { create: true });
-          
-          // New Category Dir
-          // @ts-ignore
-          const newCatHandle = await yearHandle.getDirectoryHandle(newCategory, { create: true });
-          
-          let targetDir = newCatHandle;
-          // New Sub Dir if needed
-          if (newSubCategory) {
-              // @ts-ignore
-              targetDir = await newCatHandle.getDirectoryHandle(newSubCategory, { create: true });
-          }
-
-          // @ts-ignore
-          const newFileHandle = await targetDir.getFileHandle(doc.fileName, { create: true });
-          // @ts-ignore
-          const writable = await newFileHandle.createWritable();
-          await writable.write(oldBlob);
-          await writable.close();
-
-          // Delete Old File
-          // We need to find the parent dir of the old file
-          const pathParts = doc.filePath.split('/');
-          // pathParts: _ARCHIVE / YEAR / CAT / (SUBCAT?) / FILE
-          // If length is 4: _ARCHIVE/2024/Cat/file.pdf
-          // If length is 5: _ARCHIVE/2024/Cat/Sub/file.pdf
-          
-          const oldCatName = pathParts[2];
-          // @ts-ignore
-          const oldCatDir = await yearHandle.getDirectoryHandle(oldCatName);
-          
-          if (pathParts.length === 5) {
-               // Was in subfolder
-               const oldSubName = pathParts[3];
-               // @ts-ignore
-               const oldSubDir = await oldCatDir.getDirectoryHandle(oldSubName);
-               // @ts-ignore
-               await oldSubDir.removeEntry(doc.fileName);
-               // Optional: remove subfolder if empty? No, dangerous.
-          } else {
-               // Was in main folder
-               // @ts-ignore
-               await oldCatDir.removeEntry(doc.fileName);
-          }
-
-          const subPath = newSubCategory ? `${newSubCategory}/${doc.fileName}` : doc.fileName;
-          return { ...doc, category: newCategory, subCategory: newSubCategory, filePath: `_ARCHIVE/${doc.year}/${newCategory}/${subPath}` };
-      } catch (e) { 
-          console.error("Move failed", e);
-          return doc; 
+          targetDir = await newCatDir.getDirectoryHandle(newSubCategory, { create: true });
       }
+
+      const fileName = doc.fileName || doc.title;
+      // @ts-ignore
+      const newFileHandle = await targetDir.getFileHandle(fileName, { create: true });
+      // @ts-ignore
+      const writable = await newFileHandle.createWritable();
+      await writable.write(fileBlob);
+      await writable.close();
+
+      // Delete old file (Best effort, path parsing)
+      try {
+          const oldPathParts = doc.filePath.split('/');
+          // _ARCHIVE / YEAR / CAT / [SUB] / FILE
+          // Navigate to parent of file
+          let currentDir = root;
+          for(let i=0; i<oldPathParts.length - 1; i++) {
+              // @ts-ignore
+              currentDir = await currentDir!.getDirectoryHandle(oldPathParts[i]);
+          }
+          // @ts-ignore
+          await currentDir!.removeEntry(oldPathParts[oldPathParts.length-1]);
+      } catch (e) {
+          console.warn("Could not delete old file", e);
+      }
+
+      const subPath = newSubCategory ? `${newSubCategory}/${fileName}` : fileName;
+      doc.filePath = `_ARCHIVE/${doc.year}/${newCategory}/${subPath}`;
+      doc.category = newCategory;
+      doc.subCategory = newSubCategory;
+      
+      return doc;
   }
 
   static async getFileFromVault(filePath: string): Promise<Blob | null> {
       if (!VaultService.isConnected()) return null;
-      if (!filePath) return null;
+      const root = await VaultService.getDirHandle();
+      if (!root) return null;
+
       try {
           const parts = filePath.split('/');
-          let currentDir = await VaultService.getDirHandle();
+          let currentDir = root;
+          
+          // Navigate folders
           for (let i = 0; i < parts.length - 1; i++) {
-              if(!currentDir) return null;
               // @ts-ignore
               currentDir = await currentDir.getDirectoryHandle(parts[i]);
           }
+          
+          // Get File
+          const fileName = parts[parts.length - 1];
           // @ts-ignore
-          const fileHandle = await currentDir.getFileHandle(parts[parts.length - 1]);
+          const fileHandle = await currentDir.getFileHandle(fileName);
           return await fileHandle.getFile();
-      } catch (e) { return null; }
+      } catch (e) {
+          console.error("File not found in vault:", filePath, e);
+          return null;
+      }
   }
 }

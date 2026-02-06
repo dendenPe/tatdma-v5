@@ -1,6 +1,6 @@
 
 // GLOBAL CONSTANTS
-export const APP_VERSION = 'v5.0a';
+export const APP_VERSION = 'v5.0b';
 
 export interface Trade {
   pnl: number;
@@ -193,6 +193,26 @@ export interface NoteDocument {
   userNote?: string; // NEW: Manual user comments/notes on top of the document
 }
 
+// --- NEW IN v5b: DAILY EXPENSES ---
+export type ExpenseCategory = 'Verpflegung' | 'Mobilität' | 'Haushalt' | 'Freizeit' | 'Shopping' | 'Gesundheit' | 'Wohnen' | 'Reisen' | 'Sonstiges';
+
+export const EXPENSE_CATEGORIES: ExpenseCategory[] = ['Verpflegung', 'Mobilität', 'Haushalt', 'Freizeit', 'Shopping', 'Gesundheit', 'Wohnen', 'Reisen', 'Sonstiges'];
+
+export interface ExpenseEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  merchant: string; // "Coop", "Shell", "SBB"
+  description?: string; // Context details
+  items?: string[]; // NEW: Specific items purchased (e.g. ["Milch", "Brot"])
+  amount: number;
+  currency: string;
+  rate: number; // Rate to CHF
+  category: ExpenseCategory;
+  location?: string; // "Zürich", "Berlin"
+  receiptId?: string; // DB ID of the receipt file
+  isTaxRelevant: boolean; // Flag if copied to tax
+}
+
 export interface AppData {
   trades: Record<string, DayEntry>;
   salary: Record<string, Record<string, SalaryEntry>>; // year -> month -> entry
@@ -218,4 +238,7 @@ export interface AppData {
   // New in v4
   notes: Record<string, NoteDocument>; // key = id
   categoryRules?: Record<string, string[]>; // Category -> Array of keywords
+  
+  // New in v5b
+  dailyExpenses: Record<string, ExpenseEntry[]>; // Key = Year (2025), Value = List of expenses
 }

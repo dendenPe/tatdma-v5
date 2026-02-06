@@ -1,7 +1,14 @@
 
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { CATEGORY_STRUCTURE } from "../types";
+import * as pdfjsLib from 'pdfjs-dist';
+import { CATEGORY_STRUCTURE, EXPENSE_CATEGORIES } from "../types";
+
+// Set Worker for PDF to Image conversion
+// @ts-ignore
+if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    // @ts-ignore
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+}
 
 // Response Interface based on Schema
 export interface ScannedReceipt {
@@ -17,7 +24,7 @@ export interface AnalyzedDocument {
   title: string;
   summary: string;
   category: string;
-  subCategory?: string; // New in v5a
+  subCategory?: string;
   date: string;
   isTaxRelevant: boolean;
   taxData?: {
@@ -25,13 +32,21 @@ export interface AnalyzedDocument {
     currency: string;
     taxCategory: string;
   };
-  // NEW: Detailed Payment Info
+  dailyExpenseData?: {
+      isExpense: boolean;
+      merchant: string;
+      location: string;
+      expenseCategory: string;
+      amount: number;
+      currency: string;
+      items?: string[]; // NEW
+  };
   paymentDetails?: {
-    recipientName?: string; // Who gets the money?
-    payerName?: string;     // Who pays?
-    iban?: string;          // Account Number
-    reference?: string;     // Ref Nr / Invoice Nr
-    dueDate?: string;       // Payment Deadline
+    recipientName?: string;
+    payerName?: string;
+    iban?: string;
+    reference?: string;
+    dueDate?: string;
   };
   aiReasoning: string;
 }
@@ -39,7 +54,6 @@ export interface AnalyzedDocument {
 export class GeminiService {
   
   private static getApiKey(): string | null {
-      // Priority: LocalStorage (User Input) -> Process Env (Dev fallback)
       return localStorage.getItem('tatdma_api_key') || (typeof process !== 'undefined' && process.env ? process.env.API_KEY : null) || null;
   }
 
@@ -49,7 +63,9 @@ export class GeminiService {
       reader.readAsDataURL(file);
       reader.onload = () => {
         const result = reader.result as string;
-        // Remove the data URL prefix (e.g. "data:image/jpeg;base64,")
+        // The result usually looks like "data:image/jpeg;base64,..."
+        // If file.type was empty, it might be "data:base64,..." or similar depending on browser.
+        // We always want the part AFTER the comma.
         const base64 = result.split(',')[1];
         resolve(base64);
       };
@@ -57,20 +73,81 @@ export class GeminiService {
     });
   }
 
-  // Legacy method for single receipt scan in TaxView
+  // Helper to determine MIME type if file.type is empty (common with HEIC on some browsers)
+  private static getMimeType(file: File): string {
+      if (file.type) return file.type;
+      
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      switch (ext) {
+          case 'heic': return 'image/heic';
+          case 'heif': return 'image/heif';
+          case 'jpg':
+          case 'jpeg': return 'image/jpeg';
+          case 'png': return 'image/png';
+          case 'webp': return 'image/webp';
+          case 'pdf': return 'application/pdf';
+          default: return 'application/octet-stream';
+      }
+  }
+
+  // NEW: Convert first page of PDF to High-Res Image Base64
+  // This forces Gemini to use Vision capabilities instead of relying on broken PDF text layers.
+  private static async pdfToImageBase64(file: File): Promise<string> {
+      try {
+          const arrayBuffer = await file.arrayBuffer();
+          const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+          const pdf = await loadingTask.promise;
+          const page = await pdf.getPage(1); // Get first page
+
+          // Scale up for better OCR/Vision resolution (2.0 is usually enough, 3.0 is safer)
+          const viewport = page.getViewport({ scale: 2.5 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          
+          if (!context) throw new Error("Canvas context not available");
+
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+
+          // @ts-ignore
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+          return dataUrl.split(',')[1];
+      } catch (e) {
+          console.error("PDF-to-Image conversion failed", e);
+          throw e;
+      }
+  }
+
+  // Legacy method for single receipt scan in TaxView (updated to use vision logic)
   static async analyzeReceipt(file: File): Promise<ScannedReceipt | null> {
     try {
       const apiKey = this.getApiKey();
       if (!apiKey) throw new Error("API Key fehlt! Bitte in den Systemeinstellungen hinterlegen.");
 
       const ai = new GoogleGenAI({ apiKey });
-      const base64Data = await this.fileToBase64(file);
-      const mimeType = file.type;
+      
+      let base64Data: string;
+      let mimeType = this.getMimeType(file);
+
+      // Force Vision Mode for PDFs
+      if (mimeType === 'application/pdf') {
+          try {
+              base64Data = await this.pdfToImageBase64(file);
+              mimeType = 'image/jpeg'; // Trick AI into treating it as an image
+          } catch (e) {
+              // Fallback
+              base64Data = await this.fileToBase64(file);
+          }
+      } else {
+          base64Data = await this.fileToBase64(file);
+      }
 
       const schema = {
         type: Type.OBJECT,
         properties: {
-          amount: { type: Type.NUMBER, description: "Total YEARLY amount. If the document shows a monthly amount, multiply by 12." },
+          amount: { type: Type.NUMBER, description: "Total amount on the receipt. If monthly is shown, calculate yearly." },
           currency: { type: Type.STRING, description: "CHF, USD, or EUR" },
           date: { type: Type.STRING, description: "YYYY-MM-DD" },
           category: { 
@@ -78,7 +155,7 @@ export class GeminiService {
             enum: ['Berufsauslagen', 'Weiterbildung', 'Alimente', 'Kindesunterhalt', 'Hardware/Büro', 'Versicherung', 'Krankenkassenprämien', 'Sonstiges']
           },
           description: { type: Type.STRING },
-          isMonthlySummary: { type: Type.BOOLEAN, description: "Set to true if you calculated a yearly sum from a monthly amount." }
+          isMonthlySummary: { type: Type.BOOLEAN }
         },
         required: ["amount", "currency", "category", "description"],
       };
@@ -88,7 +165,7 @@ export class GeminiService {
         contents: {
           parts: [
             { inlineData: { mimeType, data: base64Data } },
-            { text: `Analyze this receipt for tax purposes. IMPORTANT: If you see a monthly amount (e.g. 'monatlich', 'pro Monat'), calculate the yearly sum (x12). Return JSON.` }
+            { text: `Analyze this image visually. Extract exact total amount.` }
           ]
         },
         config: { responseMimeType: "application/json", responseSchema: schema }
@@ -104,13 +181,10 @@ export class GeminiService {
     }
   }
 
-  // NEW: Generic Document Analysis for Inbox with Updated Categories
+  // MAIN ANALYSIS FUNCTION
   static async analyzeDocument(file: File): Promise<AnalyzedDocument | null> {
     try {
       const apiKey = this.getApiKey();
-      
-      // DEBUG LOGGING
-      console.log("Gemini Scan Start. File:", file.name, "API Key Present:", !!apiKey);
       
       if (!apiKey) {
           console.warn("ABORTING: No API Key found.");
@@ -118,12 +192,26 @@ export class GeminiService {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const base64Data = await this.fileToBase64(file);
       
-      // Dynamic Schema based on CATEGORY_STRUCTURE
-      const mainCategories = Object.keys(CATEGORY_STRUCTURE);
+      let base64Data: string;
+      let mimeType = this.getMimeType(file);
       
-      // Create a string representation of the structure for the prompt context
+      console.log(`Gemini Scan Start. File: ${file.name}, Detected MIME: ${mimeType}`);
+
+      // 1. VISION BRIDGE: Convert PDF to Image to force Vision Model
+      if (mimeType === 'application/pdf') {
+          console.log("Converting PDF to Image for Vision Analysis...");
+          try {
+              base64Data = await this.pdfToImageBase64(file);
+              mimeType = 'image/jpeg'; // Sending as Image!
+          } catch (e) {
+              console.warn("PDF conversion failed, using raw PDF", e);
+              base64Data = await this.fileToBase64(file);
+          }
+      } else {
+          base64Data = await this.fileToBase64(file);
+      }
+      
       const structureContext = Object.entries(CATEGORY_STRUCTURE).map(([cat, subs]) => {
           return `- ${cat}: [${subs.join(', ')}]`;
       }).join('\n');
@@ -131,41 +219,51 @@ export class GeminiService {
       const schema = {
         type: Type.OBJECT,
         properties: {
-          title: { type: Type.STRING, description: "A clean, short filename/title for the document." },
-          summary: { type: Type.STRING, description: "A highly relevant summary of the content (2-3 sentences). Identify the sender, key figures, and main purpose." },
-          category: { 
-            type: Type.STRING, 
-            enum: mainCategories,
-            description: "The strict Main Category for this document." 
-          },
-          subCategory: {
-            type: Type.STRING,
-            description: "The most fitting Sub-Category based on the Main Category. If none fits perfectly, leave empty."
-          },
-          date: { type: Type.STRING, description: "YYYY-MM-DD. The official date of the document (Date of issue or Period Start)." },
-          isTaxRelevant: { type: Type.BOOLEAN, description: "True ONLY if this document represents a deductible expense for Swiss taxes." },
-          aiReasoning: { type: Type.STRING, description: "Short explanation: Why did you choose this category? If amount found, show calculation." },
+          title: { type: Type.STRING, description: "Short title." },
+          summary: { type: Type.STRING, description: "Short summary." },
+          category: { type: Type.STRING, enum: Object.keys(CATEGORY_STRUCTURE) },
+          subCategory: { type: Type.STRING },
+          date: { type: Type.STRING, description: "YYYY-MM-DD" },
+          isTaxRelevant: { type: Type.BOOLEAN },
+          aiReasoning: { type: Type.STRING },
+          
           taxData: {
             type: Type.OBJECT,
             properties: {
-              amount: { type: Type.NUMBER, description: "The total deductible amount for the tax year. Prefer explicit yearly totals found in text. If monthly, calculate x12 (or pro-rata if start date is mid-year)." },
-              currency: { type: Type.STRING, description: "CHF, EUR, USD" },
-              taxCategory: { 
-                 type: Type.STRING, 
-                 enum: ['Berufsauslagen', 'Weiterbildung', 'Alimente', 'Kindesunterhalt', 'Hardware/Büro', 'Versicherung', 'Krankenkassenprämien', 'Sonstiges'],
-                 description: "Strict tax deduction category."
-              }
+              amount: { type: Type.NUMBER },
+              currency: { type: Type.STRING },
+              taxCategory: { type: Type.STRING, enum: ['Berufsauslagen', 'Weiterbildung', 'Alimente', 'Kindesunterhalt', 'Hardware/Büro', 'Versicherung', 'Krankenkassenprämien', 'Sonstiges'] }
             },
             nullable: true
           },
+
+          // AGGRESSIVE EXPENSE EXTRACTION
+          dailyExpenseData: {
+              type: Type.OBJECT,
+              properties: {
+                  isExpense: { type: Type.BOOLEAN, description: "TRUE if this is ANY kind of cost, purchase, ticket, restaurant, shop, invoice, fee or bill." },
+                  merchant: { type: Type.STRING, description: "Vendor Name (e.g. Coop, Migros, SBB, Netflix, Restaurant Name)." },
+                  location: { type: Type.STRING, description: "City/Location if visible." },
+                  amount: { type: Type.NUMBER, description: "The TOTAL amount paid." },
+                  currency: { type: Type.STRING },
+                  expenseCategory: { type: Type.STRING, enum: EXPENSE_CATEGORIES },
+                  items: { 
+                      type: Type.ARRAY, 
+                      items: { type: Type.STRING },
+                      description: "List of specific items purchased (e.g. 'Milk', 'Bread', 'Chicken'). Only for shopping/groceries." 
+                  }
+              },
+              nullable: true
+          },
+
           paymentDetails: {
             type: Type.OBJECT,
             properties: {
-                recipientName: { type: Type.STRING, description: "The name of the company or person receiving payment (Sender of the invoice).", nullable: true },
-                payerName: { type: Type.STRING, description: "The name of the person expected to pay (Addressee).", nullable: true },
-                iban: { type: Type.STRING, description: "The IBAN or Account Number found.", nullable: true },
-                reference: { type: Type.STRING, description: "QR Reference number or Invoice number.", nullable: true },
-                dueDate: { type: Type.STRING, description: "The specific due date if mentioned (Zahlbar bis).", nullable: true }
+                recipientName: { type: Type.STRING, nullable: true },
+                payerName: { type: Type.STRING, nullable: true },
+                iban: { type: Type.STRING, nullable: true },
+                reference: { type: Type.STRING, nullable: true },
+                dueDate: { type: Type.STRING, nullable: true }
             },
             nullable: true
           }
@@ -174,53 +272,40 @@ export class GeminiService {
       };
 
       const prompt = `
-      You are a smart Personal Assistant & Swiss Tax Expert. Analyze this document carefully.
+      Perform a VISUAL ANALYSIS of this document. It might be an image or a scanned PDF.
       
-      TASK 1: CATEGORIZE
-      Assign one of the provided Main Categories and a Sub-Category.
-      Here is the allowed structure:
+      TASK: IDENTIFY EXPENSES
+      Look for ANY prices, totals, receipts, invoices, or payment confirmations.
+      If you see a price and a merchant/vendor:
+      1. Set 'dailyExpenseData.isExpense' to TRUE.
+      2. Extract the 'merchant' (e.g. Coop, SBB, Apple, Restaurant XYZ).
+      3. Extract the 'amount' (Endbetrag / Total).
+      4. Categorize into: Verpflegung, Mobilität, Haushalt, Freizeit, Shopping, Gesundheit, Wohnen, Reisen, Sonstiges.
+      5. IF IT IS A SHOPPING RECEIPT: Extract the specific items purchased into 'dailyExpenseData.items'.
+      
+      TASK: CLASSIFY
+      Assign a main category from the provided list.
+      Structure:
       ${structureContext}
       
-      TASK 2: SUMMARIZE
-      Provide a concise but useful summary. 
-      - Who is the sender? 
-      - What is the subject? 
-      - Are there key dates or deadlines?
-      
-      TASK 3: EXTRACTION (PAYMENT DETAILS)
-      If this is an invoice, contract, or bill, extract detailed payment information:
-      - Who is the Recipient (Creditor)?
-      - Who is the Payer (Debtor)?
-      - Extract IBAN, QR-Reference, or Account Numbers.
-      
-      IMPORTANT: If NO payment details (IBAN, Reference, Due Date) are found, return 'null' for the paymentDetails object. Do not invent data.
-      
-      TASK 4: TAX ANALYSIS
-      Search for any cost that can be deducted from taxes in Switzerland (e.g. Health Insurance, Professional Expenses, Education).
-      
-      *** IMPORTANT CALCULATION RULES ***
-      1. **DATE:** Find the DATE OF ISSUE or START OF PERIOD. Do NOT use the current date (2025). Use the year found in the document.
-      2. **AMOUNT:** 
-         - Prefer an EXPLICIT ANNUAL TOTAL if printed.
-         - If only a MONTHLY amount is found, check the VALID FROM date.
-         - If valid from Jan 1st: Multiply by 12.
-         - If valid from mid-year: Calculate pro-rata.
-      
-      If no tax relevant amount is found, set isTaxRelevant to false.
+      Important: 
+      - If it is a receipt (Quittung), extracting the expense data AND ITEMS is the HIGHEST priority.
+      - Ignore bad OCR text layers; trust your vision model (pixels) for numbers and names.
+      - Date format: YYYY-MM-DD.
       `;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
           parts: [
-            { inlineData: { mimeType: file.type, data: base64Data } },
+            { inlineData: { mimeType: mimeType, data: base64Data } },
             { text: prompt }
           ]
         },
         config: { responseMimeType: "application/json", responseSchema: schema }
       });
 
-      console.log("Gemini Response Raw:", response.text);
+      console.log("Gemini Vision Response:", response.text);
 
       if (!response.text) return null;
       return JSON.parse(response.text) as AnalyzedDocument;
