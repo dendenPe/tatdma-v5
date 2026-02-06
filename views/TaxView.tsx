@@ -35,14 +35,14 @@ import {
   ScanLine,
   FileCode,
   Loader2,
-  Sparkles
+  Sparkles,
+  Calendar
 } from 'lucide-react';
 import { AppData, TaxExpense, BankBalance, SalaryEntry, ChildDetails, AlimonyDetails } from '../types';
 import { DBService } from '../services/dbService';
 import { PdfGenService, PdfExportOptions } from '../services/pdfGenService';
 import { DocumentService } from '../services/documentService';
 import { XmlExportService } from '../services/xmlExportService';
-// Import Gemini Service explicitly
 import { GeminiService } from '../services/geminiService';
 
 interface Props {
@@ -251,7 +251,7 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                             haushalt: false,
                             empfaenger_vorname: recNames.vorname,
                             empfaenger_name: recNames.nachname,
-                            empfaenger_ort: d.recAddress || '', 
+                            empfaenger_plz_ort: d.recAddress || '', 
                             paymentFrequency: d.frequency === '12' ? 'fix' : 'individuell',
                             monthlyAmounts: Array.isArray(d.monthlyAmounts) && d.monthlyAmounts.length === 12 ? d.monthlyAmounts : Array(12).fill(d.baseAmount || 0),
                             currency: exp.currency || 'CHF'
@@ -263,7 +263,7 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                          newExp.alimonyDetails = {
                              empfaenger_vorname: recNames.vorname,
                              empfaenger_name: recNames.nachname,
-                             empfaenger_ort: d.recAddress || '',
+                             empfaenger_plz_ort: d.recAddress || '',
                              getrennt_seit: '',
                              paymentFrequency: d.frequency === '12' ? 'fix' : 'individuell',
                              monthlyAmounts: Array.isArray(d.monthlyAmounts) && d.monthlyAmounts.length === 12 ? d.monthlyAmounts : Array(12).fill(d.baseAmount || 0),
@@ -312,9 +312,16 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
     if (field === 'cat' && (value === 'Alimente' || value === 'Kindesunterhalt')) {
       if (value === 'Alimente' && !newExpenses[index].alimonyDetails) {
-        newExpenses[index].alimonyDetails = { empfaenger_name: '', empfaenger_vorname: '', empfaenger_ort: '', getrennt_seit: '', paymentFrequency: 'fix', monthlyAmounts: Array(12).fill(0), currency: 'CHF' };
+        newExpenses[index].alimonyDetails = { 
+            empfaenger_name: '', empfaenger_vorname: '', empfaenger_plz_ort: '', 
+            getrennt_seit: '', paymentFrequency: 'fix', monthlyAmounts: Array(12).fill(0), currency: 'CHF' 
+        };
       } else if (value === 'Kindesunterhalt' && !newExpenses[index].childDetails) {
-        newExpenses[index].childDetails = { vorname: '', nachname: '', geburtsdatum: '', schule_ausbildung: '', konfession: 'andere', haushalt: true, paymentFrequency: 'fix', monthlyAmounts: Array(12).fill(0), currency: 'CHF', empfaenger_vorname: '', empfaenger_name: '', empfaenger_ort: '' };
+        newExpenses[index].childDetails = { 
+            vorname: '', nachname: '', geburtsdatum: '', schule_ausbildung: '', konfession: 'andere', haushalt: true, 
+            paymentFrequency: 'fix', monthlyAmounts: Array(12).fill(0), currency: 'CHF', 
+            empfaenger_vorname: '', empfaenger_name: '', empfaenger_plz_ort: '' 
+        };
       }
       setSpecialExpenseModalIdx(index);
     }
@@ -342,10 +349,61 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       updateSpecialExpenseFull(idx, { [type]: newDetails, desc: newDesc });
   };
 
-  const handleAmountChange = (idx: number, type: 'childDetails' | 'alimonyDetails', monthlyAmounts: number[]) => {
-      const totalAmount = monthlyAmounts.reduce((a, b) => a + b, 0);
+  // Handles updating the 12-month array
+  const handleMonthlyAmountsChange = (idx: number, type: 'childDetails' | 'alimonyDetails', newMonthlyAmounts: number[]) => {
+      const total = newMonthlyAmounts.reduce((a, b) => a + b, 0);
       const currentDetails = data.tax.expenses[idx][type];
-      updateSpecialExpenseFull(idx, { amount: totalAmount, [type]: { ...currentDetails, monthlyAmounts } });
+      
+      // Update the main expense amount AND the details array
+      updateSpecialExpenseFull(idx, { 
+          amount: total, 
+          [type]: { ...currentDetails, monthlyAmounts: newMonthlyAmounts } 
+      });
+  };
+
+  // Handles switching between Fix (x12) and Variable
+  const toggleFrequency = (idx: number, type: 'childDetails' | 'alimonyDetails', mode: 'fix' | 'individuell') => {
+      const currentDetails = data.tax.expenses[idx][type];
+      if (!currentDetails) return;
+
+      let newMonthly = [...currentDetails.monthlyAmounts];
+      if (mode === 'fix') {
+          // If switching to fix, take the first month or average as base? Let's take index 0
+          const base = newMonthly[0] || 0;
+          newMonthly = Array(12).fill(base);
+      }
+      
+      const total = newMonthly.reduce((a, b) => a + b, 0);
+      updateSpecialExpenseFull(idx, { 
+          amount: total, 
+          [type]: { ...currentDetails, paymentFrequency: mode, monthlyAmounts: newMonthly } 
+      });
+  };
+
+  const handleFixAmountChange = (idx: number, type: 'childDetails' | 'alimonyDetails', amount: number) => {
+      const currentDetails = data.tax.expenses[idx][type];
+      const newMonthly = Array(12).fill(amount);
+      updateSpecialExpenseFull(idx, {
+          amount: amount * 12,
+          [type]: { ...currentDetails, monthlyAmounts: newMonthly }
+      });
+  };
+
+  const handleCurrencyChange = (idx: number, newCurrency: string) => {
+      // Update Main Expense Currency + Details Currency
+      const expense = data.tax.expenses[idx];
+      let newRate = 1;
+      if (newCurrency === 'USD') newRate = data.tax.rateUSD || 0.85;
+      else if (newCurrency === 'EUR') newRate = data.tax.rateEUR || 0.94;
+
+      const type = expense.cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails';
+      const details = expense[type as 'childDetails' | 'alimonyDetails'];
+
+      updateSpecialExpenseFull(idx, { 
+          currency: newCurrency, 
+          rate: newRate,
+          [type]: { ...details, currency: newCurrency }
+      });
   };
 
   const removeExpense = (index: number) => {
@@ -521,7 +579,9 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                             <td className="px-6 py-4 flex items-center gap-2">
                                 <input type="text" value={exp.desc} onChange={(e) => updateExpense(realIdx, 'desc', e.target.value)} className="w-full bg-transparent font-bold text-gray-800 outline-none text-sm placeholder-gray-300" placeholder="Belegname..." style={{ colorScheme: 'light' }}/>
                                 {isSpecial && (
-                                    <button onClick={() => setSpecialExpenseModalIdx(realIdx)} className="p-1.5 text-blue-500 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"><Settings size={14} /></button>
+                                    <button onClick={() => setSpecialExpenseModalIdx(realIdx)} className="p-1.5 text-blue-500 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1">
+                                        <Settings size={14} /> <span className="text-[10px] font-bold">Details</span>
+                                    </button>
                                 )}
                             </td>
                             <td className="px-6 py-4">
@@ -586,20 +646,258 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* Special Expense Modal Code (Shortened for brevity as it was correct in prev context) */}
-      {specialExpenseModalIdx !== null && (
+      {/* Special Expense Modal - FULLY RESTORED & ENHANCED */}
+      {specialExpenseModalIdx !== null && data.tax.expenses[specialExpenseModalIdx] && (
            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
-              <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-                <h3 className="text-xl font-black text-gray-800">Details: {data.tax.expenses[specialExpenseModalIdx].cat}</h3>
-                <button onClick={() => setSpecialExpenseModalIdx(null)}><X size={24} /></button>
+           <div className="bg-white w-full max-w-5xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-300">
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Baby size={24} /></div>
+                    <div>
+                        <h3 className="text-xl font-black text-gray-800">{data.tax.expenses[specialExpenseModalIdx].cat}</h3>
+                        <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Detaillierte Erfassung</p>
+                    </div>
+                </div>
+                <button onClick={() => setSpecialExpenseModalIdx(null)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X size={24} /></button>
               </div>
-              <div className="flex-1 overflow-y-auto p-10 space-y-10">
-                 {/* Reused from previous logic... */}
-                 <p className="text-gray-500 text-sm">Bitte Angaben in der vorherigen Ansicht pflegen oder hier erweitern.</p>
+              
+              <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
+                 
+                 {/* 1. SECTION: PERSONALIEN */}
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                     
+                     {/* KINDESUNTERHALT: Kind-Daten */}
+                     {data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' && data.tax.expenses[specialExpenseModalIdx].childDetails && (
+                         <div className="space-y-4 p-5 bg-gray-50/50 rounded-2xl border border-gray-100">
+                             <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><Baby size={14}/> Angaben zum Kind</h4>
+                             <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.vorname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.nachname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, nachname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
+                                    <input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.geburtsdatum} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="col-span-2 space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Wohnadresse (falls abweichend)</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.adresse_kind || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, adresse_kind: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                             </div>
+                         </div>
+                     )}
+
+                     {/* EMPFÄNGER DATEN (Mutter/Ex-Partner) */}
+                     <div className="space-y-4 p-5 bg-gray-50/50 rounded-2xl border border-gray-100">
+                         <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><User size={14}/> Empfänger / Elternteil</h4>
+                         
+                         {data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? (
+                             <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_vorname || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_name || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_name: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="col-span-2 space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Strasse / Nr</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_strasse || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_strasse: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">PLZ / Ort</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_plz_ort || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_plz_ort: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Land</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_land || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_land: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
+                                    <input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_geburtsdatum || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                             </div>
+                         ) : (
+                             <div className="grid grid-cols-2 gap-4">
+                                {/* ALIMENTE Empfänger Fields */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_vorname || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_name || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_name: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="col-span-2 space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Strasse / Nr</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_strasse || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_strasse: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">PLZ / Ort</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_plz_ort || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_plz_ort: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Land</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_land || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_land: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
+                                    <input type="date" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_geburtsdatum || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
+                                    <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
+                                </div>
+                             </div>
+                         )}
+                     </div>
+                 </div>
+
+                 {/* 2. SECTION: ZAHLUNGSDETAILS */}
+                 <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+                     <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-4">
+                         <h4 className="text-sm font-black text-gray-800 uppercase tracking-widest flex items-center gap-2">
+                             <Calculator size={16} className="text-blue-500"/> Zahlungsdetails & Beträge
+                         </h4>
+                         <div className="flex gap-4">
+                             <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-lg">
+                                 <button 
+                                    onClick={() => toggleFrequency(specialExpenseModalIdx, data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails', 'fix')}
+                                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                                        (data.tax.expenses[specialExpenseModalIdx].childDetails?.paymentFrequency === 'fix' || data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.paymentFrequency === 'fix')
+                                        ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                 >
+                                     Fix (Monatlich x12)
+                                 </button>
+                                 <button 
+                                    onClick={() => toggleFrequency(specialExpenseModalIdx, data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails', 'individuell')}
+                                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                                        (data.tax.expenses[specialExpenseModalIdx].childDetails?.paymentFrequency === 'individuell' || data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.paymentFrequency === 'individuell')
+                                        ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                 >
+                                     Variabel / Tabelle
+                                 </button>
+                             </div>
+                             
+                             <div className="flex items-center gap-2 border-l pl-4 border-gray-200">
+                                 <span className="text-[10px] font-bold text-gray-400 uppercase">Währung</span>
+                                 <select 
+                                    value={data.tax.expenses[specialExpenseModalIdx].currency} 
+                                    onChange={(e) => handleCurrencyChange(specialExpenseModalIdx, e.target.value)}
+                                    className="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-sm font-bold outline-none"
+                                 >
+                                     <option value="CHF">CHF</option>
+                                     <option value="EUR">EUR</option>
+                                     <option value="USD">USD</option>
+                                 </select>
+                             </div>
+                         </div>
+                     </div>
+
+                     {/* AMOUNT INPUTS */}
+                     {(() => {
+                         const type = data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails';
+                         const details = data.tax.expenses[specialExpenseModalIdx][type];
+                         if (!details) return null;
+
+                         if (details.paymentFrequency === 'fix') {
+                             return (
+                                 <div className="flex items-center gap-4 py-4">
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Monatlicher Betrag</label>
+                                         <input 
+                                            type="number" 
+                                            value={details.monthlyAmounts[0] || 0}
+                                            onChange={(e) => handleFixAmountChange(specialExpenseModalIdx, type, parseFloat(e.target.value) || 0)}
+                                            className="w-full text-2xl font-black text-gray-800 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100"
+                                         />
+                                     </div>
+                                     <div className="flex items-center justify-center pt-6 text-gray-300 font-bold">x 12 =</div>
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Jahrestotal (Übertrag)</label>
+                                         <div className="w-full text-2xl font-black text-blue-600 bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-3">
+                                             {data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}
+                                         </div>
+                                     </div>
+                                 </div>
+                             );
+                         } else {
+                             // INDIVIDUAL TABLE
+                             return (
+                                 <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                                     {months.map((m, mIdx) => (
+                                         <div key={m} className="space-y-1">
+                                             <label className="text-[10px] font-bold text-gray-400 uppercase">{m}</label>
+                                             <input 
+                                                type="number"
+                                                value={details.monthlyAmounts[mIdx] || 0}
+                                                onChange={(e) => {
+                                                    const newAmts = [...details.monthlyAmounts];
+                                                    newAmts[mIdx] = parseFloat(e.target.value) || 0;
+                                                    handleMonthlyAmountsChange(specialExpenseModalIdx, type, newAmts);
+                                                }}
+                                                className="w-full font-bold text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-1 focus:ring-blue-200"
+                                             />
+                                         </div>
+                                     ))}
+                                     <div className="col-span-full pt-4 border-t border-gray-100 flex justify-end items-center gap-4">
+                                         <span className="text-sm font-bold text-gray-400 uppercase">Jahressumme:</span>
+                                         <span className="text-2xl font-black text-blue-600">{data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}</span>
+                                         <span className="text-xs font-bold text-gray-400">{data.tax.expenses[specialExpenseModalIdx].currency}</span>
+                                     </div>
+                                 </div>
+                             );
+                         }
+                     })()}
+                     
+                     {/* Currency Info */}
+                     {data.tax.expenses[specialExpenseModalIdx].currency !== 'CHF' && (
+                         <div className="mt-4 p-3 bg-blue-50 text-blue-700 text-xs rounded-lg flex items-center gap-2">
+                             <Info size={16}/>
+                             <span>
+                                 Umgerechnet in CHF für Steuererklärung: <strong>{getConvertedCHF(data.tax.expenses[specialExpenseModalIdx]).toFixed(2)} CHF</strong> 
+                                 (Kurs: {data.tax.expenses[specialExpenseModalIdx].rate})
+                             </span>
+                         </div>
+                     )}
+                 </div>
+                 
+                 {/* PDF Upload inside Modal */}
+                 <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center text-gray-400 gap-2">
+                     <p className="text-xs font-bold uppercase">Belege / Verträge</p>
+                     <div className="flex gap-2 flex-wrap justify-center">
+                         {data.tax.expenses[specialExpenseModalIdx].receipts.map(rid => (
+                             <div key={rid} className="px-3 py-1 bg-white border border-gray-200 rounded-full text-xs font-mono text-gray-600 flex items-center gap-2">
+                                 <Paperclip size={10}/> Beleg vorhanden
+                             </div>
+                         ))}
+                     </div>
+                     <label className="mt-2 cursor-pointer text-blue-600 hover:underline text-xs font-bold flex items-center gap-1">
+                         <Plus size={12}/> Datei hinzufügen
+                         <input type="file" className="hidden" onChange={(e) => handleReceiptUpload(specialExpenseModalIdx, e.target.files)} />
+                     </label>
+                 </div>
+
               </div>
-              <div className="p-8 border-t border-gray-100 bg-white flex justify-end gap-4">
-                 <button onClick={() => setSpecialExpenseModalIdx(null)} className="px-10 py-4 bg-[#16325c] text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-blue-800">Speichern</button>
+              <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-4">
+                 <button onClick={() => setSpecialExpenseModalIdx(null)} className="px-10 py-4 bg-[#16325c] text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/20">
+                     Speichern & Schliessen
+                 </button>
               </div>
            </div>
         </div>
@@ -722,6 +1020,50 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                <p className="text-[9px] text-blue-300/60 mt-1 italic font-bold">Synchronisiert von Wertpapiere-Tab</p>
              </div>
            </div>
+        </div>
+      )}
+
+      {/* EXPORT OPTIONS MODAL */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                <FileDown size={18} className="text-blue-600"/>
+                PDF Report Optionen
+              </h3>
+              <button onClick={() => setShowExportModal(false)}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+            </div>
+            <div className="p-6 space-y-3">
+              {Object.entries({
+                  includePersonal: 'Deckblatt & Personalien',
+                  includeMessage: 'Nachricht an Behörde',
+                  includeSalary: 'Lohnausweis Zusammenzug',
+                  includeAssets: 'Wertschriften & Vermögen',
+                  includeExpenses: 'Berufskosten & Abzüge',
+                  includeTradingProof: 'Trading Journal (Nachweis)',
+                  includeReceipts: 'Belege & Bilder Anhang'
+              }).map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <span className="text-sm font-medium text-gray-700">{label}</span>
+                    <input 
+                      type="checkbox" 
+                      checked={exportOpts[key as keyof PdfExportOptions]} 
+                      onChange={(e) => setExportOpts({...exportOpts, [key as keyof PdfExportOptions]: e.target.checked})}
+                      className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500 border-gray-300"
+                    />
+                  </label>
+              ))}
+            </div>
+            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
+              <button 
+                onClick={handleGeneratePdf}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-blue-700 shadow-lg flex items-center gap-2"
+              >
+                <FileDown size={16} /> Generieren
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

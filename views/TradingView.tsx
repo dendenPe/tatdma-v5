@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign } from 'lucide-react';
+import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { AppData, Trade, DayEntry } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';
@@ -11,7 +11,8 @@ interface Props {
 }
 
 const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
-  const [currentDate] = useState(new Date().toISOString().split('T')[0]);
+  // Initialize with today, but allow navigation
+  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
   const [entry, setEntry] = useState<DayEntry>({
     total: 0,
     note: '',
@@ -21,11 +22,27 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   });
   const [message, setMessage] = useState('');
 
+  // Load data whenever currentDate or data changes
   useEffect(() => {
     if (data.trades[currentDate]) {
       setEntry(data.trades[currentDate]);
+    } else {
+      // Reset to empty if no data for this day
+      setEntry({
+        total: 0,
+        note: '',
+        trades: [],
+        screenshots: [],
+        fees: 0
+      });
     }
   }, [currentDate, data.trades]);
+
+  const changeDate = (days: number) => {
+    const date = new Date(currentDate);
+    date.setDate(date.getDate() + days);
+    setCurrentDate(date.toISOString().split('T')[0]);
+  };
 
   const addTrade = () => {
     setEntry({
@@ -58,10 +75,17 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const handleSave = () => {
     const newData = { ...data };
-    newData.trades[currentDate] = entry;
+    // Only save if there is content to avoid empty entries in DB
+    if (entry.trades.length > 0 || entry.note.trim() || entry.total !== 0) {
+        newData.trades[currentDate] = entry;
+    } else {
+        // If empty, verify if we should delete the key? 
+        // Better to keep it explicit or just update.
+        newData.trades[currentDate] = entry;
+    }
     onUpdate(newData);
-    setMessage('✓ Erfolgreich gespeichert!');
-    setTimeout(() => setMessage(''), 3000);
+    setMessage('✓ Gespeichert');
+    setTimeout(() => setMessage(''), 2000);
   };
 
   const handleTradeImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,74 +94,101 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
-      const importedDays = ImportService.parseIBKRTradesCSV(text);
+      const importedDays = ImportService.parseTradesCSV(text);
       
       const newData = { ...data };
       let count = 0;
-      let skipped = 0;
       
-      // Merge imported days with Duplicate Check
       Object.entries(importedDays).forEach(([date, importedEntry]) => {
           if (!newData.trades[date]) {
-              // Day doesn't exist yet, take everything
               newData.trades[date] = importedEntry;
               count += importedEntry.trades.length;
           } else {
-              // Day exists, check for duplicates
               const existingDay = newData.trades[date];
+              if (importedEntry.note) existingDay.note = importedEntry.note;
+              if (importedEntry.total !== 0 || importedEntry.trades.length > 0) existingDay.total = importedEntry.total;
+
               const uniqueNewTrades: Trade[] = [];
               let addedFees = 0;
 
               importedEntry.trades.forEach(newTrade => {
-                  // Check if a VERY similar trade exists
                   const isDuplicate = existingDay.trades.some(existing => 
                       existing.inst === newTrade.inst &&
-                      Math.abs(existing.pnl - newTrade.pnl) < 0.01 && // Float tolerance
-                      existing.qty === newTrade.qty &&
-                      existing.start === newTrade.start &&
-                      existing.end === newTrade.end
+                      Math.abs(existing.pnl - newTrade.pnl) < 0.01 && 
+                      existing.start === newTrade.start
                   );
-
                   if (!isDuplicate) {
                       uniqueNewTrades.push(newTrade);
                       addedFees += (newTrade.fee || 0);
-                  } else {
-                      skipped++;
                   }
               });
 
               if (uniqueNewTrades.length > 0) {
                   existingDay.trades = [...existingDay.trades, ...uniqueNewTrades];
                   existingDay.fees = (existingDay.fees || 0) + addedFees;
-                  
-                  // Recalculate Day Total (Gross PnL - Fees)
-                  const grossPnL = existingDay.trades.reduce((s, t) => s + t.pnl, 0);
-                  const totalFees = existingDay.fees || 0;
-                  existingDay.total = grossPnL - totalFees;
-                  
                   count += uniqueNewTrades.length;
               }
           }
       });
 
       onUpdate(newData);
-      // Reload current view if today was affected
+      // Refresh view if current day was affected
       if (importedDays[currentDate]) {
           setEntry(newData.trades[currentDate]);
       }
-      
-      let msg = `${count} neue Trades importiert.`;
-      if (skipped > 0) msg += `\n(${skipped} Duplikate ignoriert)`;
-      alert(msg);
-      
-      // Reset input
+      alert(`${count} Trades importiert.`);
       e.target.value = '';
     };
     reader.readAsText(file);
   };
 
+  // Helper for Date Display
+  const dateObj = new Date(currentDate);
+  const dayName = dateObj.toLocaleDateString('de-DE', { weekday: 'long' });
+  const dayDisplay = dateObj.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {/* HEADER WITH NAVIGATION */}
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+         <div className="flex items-center gap-4">
+            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
+                <ChevronLeft size={24} />
+            </button>
+            <div className="flex flex-col items-center">
+                <h2 className="text-xl font-black text-gray-800 tracking-tight">{dayDisplay}</h2>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{dayName}</span>
+            </div>
+            <button onClick={() => changeDate(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
+                <ChevronRight size={24} />
+            </button>
+         </div>
+         
+         <div className="flex items-center gap-3">
+             <div className="relative">
+                 <input 
+                   type="date" 
+                   value={currentDate} 
+                   onChange={(e) => setCurrentDate(e.target.value)} 
+                   className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                 />
+                 <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold border border-gray-200 transition-all">
+                    <CalendarIcon size={16} /> Springe zu Datum
+                 </button>
+             </div>
+             
+             {/* Jump to Today Button */}
+             {currentDate !== new Date().toISOString().split('T')[0] && (
+                 <button 
+                    onClick={() => setCurrentDate(new Date().toISOString().split('T')[0])}
+                    className="px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold border border-blue-100 hover:bg-blue-100 transition-all"
+                 >
+                    Heute
+                 </button>
+             )}
+         </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-6">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -146,7 +197,9 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                 <FileText size={18} className="text-blue-500" />
                 Journal Einträge
               </h3>
-              <span className="text-xs text-gray-400 font-medium">{currentDate}</span>
+              {entry.trades.length > 0 && (
+                  <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">{entry.trades.length} Trades</span>
+              )}
             </div>
             
             <div className="p-6 space-y-4">
@@ -176,11 +229,11 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                   <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Einzel-Trades</label>
                   <div className="flex gap-2">
                     <label className="cursor-pointer text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors">
-                        <Upload size={14} /> CSV
+                        <Upload size={14} /> CSV Import
                         <input type="file" className="hidden" accept=".csv" onChange={handleTradeImport} />
                     </label>
                     <button onClick={addTrade} className="text-blue-600 hover:text-blue-700 text-xs font-bold flex items-center gap-1 transition-colors">
-                        <Plus size={14} /> Trade hinzufügen
+                        <Plus size={14} /> Neu
                     </button>
                   </div>
                 </div>
@@ -249,7 +302,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                   ))}
                   {entry.trades.length === 0 && (
                     <div className="text-center py-8 text-gray-400 italic text-sm">
-                      Keine Trades für heute erfasst
+                      Keine Trades an diesem Tag
                     </div>
                   )}
                 </div>

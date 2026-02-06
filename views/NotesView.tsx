@@ -1,5 +1,4 @@
 
-
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Search, 
@@ -35,7 +34,6 @@ import {
   Sparkles,
   Download,
   File as FileIcon,
-  GripVertical,
   ZoomIn,
   Table as TableIcon,
   Palette,
@@ -44,7 +42,6 @@ import {
   ArrowLeft as ArrowLeftIcon,
   ArrowRight as ArrowRightIcon,
   Layout,
-  HelpCircle,
   ChevronDown,
   ChevronRight,
   BrainCircuit,
@@ -227,8 +224,6 @@ const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale
     );
 };
 
-// ... existing code for PdfViewer and NotesView (unchanged structure, just replacing the component above) ...
-// The rest of the file content below is identical to previous, just ensuring the full file is returned valid.
 
 // --- SUB-COMPONENT: PDF VIEWER ---
 const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQuery: string, isLensEnabled: boolean }) => {
@@ -266,7 +261,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
 
         const updateScale = () => {
             if (!containerRef.current || pages.length === 0) return;
-            const containerWidth = containerRef.current.clientWidth - 48; // Padding
+            const containerWidth = containerRef.current.clientWidth - 32; // Reduced Padding
             const page = pages[0];
             const viewport = page.getViewport({ scale: 1.0 });
             
@@ -289,7 +284,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
     if (!pdf) return <div className="flex items-center justify-center h-48"><Loader2 className="animate-spin text-blue-500" /></div>;
 
     return (
-        <div ref={containerRef} className="w-full bg-gray-100 rounded-xl p-4 overflow-y-auto max-h-[calc(100vh-300px)] text-center">
+        <div ref={containerRef} className="w-full bg-gray-100 rounded-lg p-2 overflow-y-auto max-h-[calc(100vh-250px)] text-center">
             {pages.map((page, idx) => (
                 <PdfPage key={idx} page={page} scale={scale} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
             ))}
@@ -357,7 +352,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       let needsUpdate = false;
       const newNotes = { ...data.notes };
       
-      Object.values(newNotes).forEach(note => {
+      Object.values(newNotes).forEach((note: any) => {
           if (OLD_TO_NEW_MAP[note.category]) {
               note.category = OLD_TO_NEW_MAP[note.category];
               needsUpdate = true;
@@ -414,7 +409,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
 
   // Derived Data
-  const notesList = Object.values(data.notes || {}).sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
+  const notesList = (Object.values(data.notes || {}) as NoteDocument[]).sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
   
   const filteredNotes = useMemo(() => {
     return notesList.filter(note => {
@@ -524,7 +519,19 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       handleEditorInput(); // Trigger Save
   };
 
+  const updateSelectedNote = (updates: Partial<NoteDocument>) => {
+      if (!selectedNoteId) return;
+      const updatedNote = { ...data.notes[selectedNoteId], ...updates };
+      onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedNote } });
+  };
+
   const handleEditorInput = () => {
+      // FIX: Race condition guard
+      // If selectedNoteId (from React state) doesn't match lastNoteIdRef (from DOM/Effect),
+      // it means the DOM is still showing the OLD note, but the ID has switched to the NEW note.
+      // Saving now would overwrite the NEW note with OLD content. We must abort.
+      if (lastNoteIdRef.current !== selectedNoteId) return;
+
       if (editorRef.current && selectedNoteId) {
           const html = editorRef.current.innerHTML;
           updateSelectedNote({ content: html });
@@ -836,7 +843,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
      setIsReindexing(true);
      try {
          const recoveredDocs = await DocumentService.rebuildIndexFromVault();
-         const currentMap = { ...(data.notes || {}) };
+         const currentMap: Record<string, NoteDocument> = { ...(data.notes || {}) };
          let addedCount = 0;
          let updatedCount = 0;
 
@@ -860,12 +867,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
      } finally {
          setIsReindexing(false);
      }
-  };
-
-  const updateSelectedNote = (updates: Partial<NoteDocument>) => {
-      if (!selectedNoteId) return;
-      const updatedNote = { ...data.notes[selectedNoteId], ...updates };
-      onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedNote } });
   };
 
   // --- NEW: AI CONTENT ANALYSIS (NO TAX IMPORT) ---
@@ -1405,7 +1406,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
             )}
          </div>
          <div className="flex-1 md:overflow-y-auto min-h-0 pb-20">
-            {filteredNotes.map(note => (
+            {filteredNotes.map((note: any) => (
                 <div key={note.id} onClick={() => setSelectedNoteId(note.id)} className={`p-4 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedNoteId === note.id ? 'bg-blue-50/50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}>
                     <div className="flex items-start justify-between mb-1">
                         <h4 className={`font-bold text-sm truncate flex-1 ${selectedNoteId === note.id ? 'text-blue-700' : 'text-gray-800'}`}>{note.title}</h4>
@@ -1450,7 +1451,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       <div className={`flex-1 flex flex-col bg-gray-50/30 ${selectedNoteId ? 'fixed inset-0 z-[100] bg-white md:static h-[100dvh]' : 'hidden md:flex'}`}>
          {selectedNote ? (
              <>
-                <div className="p-4 md:p-6 border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 safe-area-top gap-y-3">
+                <div className="px-4 py-3 border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 safe-area-top gap-y-2">
                     <div className="flex items-center gap-3 flex-1 mr-2 overflow-hidden min-w-[200px]">
                         {/* Mobile Back Button */}
                         <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full shrink-0">
@@ -1463,7 +1464,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     type="text" 
                                     value={selectedNote.title} 
                                     onChange={(e) => updateSelectedNote({ title: e.target.value })}
-                                    className="text-lg md:text-xl font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0"
+                                    className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0"
                                     placeholder="Titel..."
                                 />
                                 {selectedNote.taxRelevant && (
@@ -1472,11 +1473,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                             </div>
                             
                             {/* CATEGORY & SUB-CATEGORY EDITING */}
-                            <div className="flex items-center gap-2 mt-1 md:mt-2 h-8 overflow-x-auto no-scrollbar">
+                            <div className="flex items-center gap-2 mt-1 h-6 overflow-x-auto no-scrollbar">
                                 <select 
                                     value={selectedNote.category} 
                                     onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} // Reset subcat on main change
-                                    className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" 
+                                    className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" 
                                     title="Kategorie ändern"
                                 >
                                     {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1488,7 +1489,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     <select 
                                         value={selectedNote.subCategory || ''}
                                         onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)}
-                                        className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors"
+                                        className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors"
                                     >
                                         <option value="">(Keine Unterkategorie)</option>
                                         {CATEGORY_STRUCTURE[selectedNote.category].map(sub => (
@@ -1499,7 +1500,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     <span className="text-[10px] text-gray-300 italic">n/a</span>
                                 )}
 
-                                <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                                <div className="w-px h-3 bg-gray-200 mx-1"></div>
                                 <span className="text-[10px] text-gray-400 uppercase tracking-widest font-mono shrink-0">{selectedNote.year}</span>
                             </div>
                         </div>
@@ -1508,27 +1509,27 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                         {/* NEW: Zoom Toggle Button */}
                         <button 
                             onClick={() => setIsLensEnabled(!isLensEnabled)}
-                            className={`p-2 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
                                 isLensEnabled 
                                 ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
                                 : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
                             }`}
                             title={isLensEnabled ? "Lupe deaktivieren" : "Lupe aktivieren"}
                         >
-                            <ZoomIn size={18} />
+                            <ZoomIn size={16} />
                         </button>
 
                         {/* NEW: AI RE-ANALYSIS BUTTON */}
                         <button 
                             onClick={handleReanalyzeContent}
                             disabled={isReanalyzing}
-                            className={`p-2 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}
                             title="Inhalt neu analysieren & kategorisieren (ohne Steuer-Import)"
                         >
                             {isReanalyzing ? (
-                                <Loader2 size={18} className="animate-spin text-purple-500" />
+                                <Loader2 size={16} className="animate-spin text-purple-500" />
                             ) : (
-                                <BrainCircuit size={18} />
+                                <BrainCircuit size={16} />
                             )}
                         </button>
 
@@ -1536,7 +1537,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                         <button 
                             onClick={toggleTaxImport}
                             disabled={isAnalyzingTax}
-                            className={`p-2 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
                                 selectedNote.taxRelevant 
                                 ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
                                 : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
@@ -1544,10 +1545,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                             title={selectedNote.taxRelevant ? "Bereits importiert (Klick zum Entfernen)" : "Via AI scannen & in Steuern importieren"}
                         >
                             {isAnalyzingTax ? (
-                                <Loader2 size={18} className="animate-spin text-blue-500" />
+                                <Loader2 size={16} className="animate-spin text-blue-500" />
                             ) : (
                                 <>
-                                    {selectedNote.taxRelevant ? <Receipt size={18} /> : <Sparkles size={18} />}
+                                    {selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />}
                                 </>
                             )}
                         </button>
@@ -1555,16 +1556,16 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                         <div className="w-px h-6 bg-gray-100 mx-1"></div>
 
                         {selectedNote.filePath && (
-                            <button onClick={openFile} className="p-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Dokument Öffnen"><Eye size={18} /></button>
+                            <button onClick={openFile} className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Dokument Öffnen"><Eye size={16} /></button>
                         )}
-                        <button onClick={deleteNote} className="p-2 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
+                        <button onClick={deleteNote} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                     </div>
                 </div>
                 
                 <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
                     {/* RICH TEXT EDITOR */}
                     {selectedNote.type === 'note' ? (
-                        <div className="flex flex-col h-full bg-white">
+                        <div key={selectedNote.id} className="flex flex-col h-full bg-white">
                             {/* Toolbar */}
                             <div className="flex flex-col bg-gray-50 border-b border-gray-100 shrink-0">
                                 <div className="flex items-center gap-1 p-2 overflow-x-auto flex-nowrap no-scrollbar">
@@ -1638,53 +1639,45 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                         </div>
                     ) : (
                         // PREVIEW FOR FILES
-                        <div className="flex-1 p-6 overflow-y-auto pb-24" style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
+                        <div className="flex-1 p-4 overflow-y-auto pb-24" style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
                            {/* NEW USER NOTE SECTION */}
-                           <div className="mb-6">
-                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-2">
-                                   <StickyNote size={12} /> Eigene Notizen / Kommentar
+                           <div className="mb-4">
+                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                                   <StickyNote size={12} /> Eigene Notizen
                                </label>
                                <textarea
                                    value={selectedNote.userNote || ''}
                                    onChange={(e) => updateSelectedNote({ userNote: e.target.value })}
-                                   className="w-full p-3 bg-amber-50/50 border border-amber-100 rounded-xl text-sm text-gray-700 placeholder-gray-400 focus:ring-2 focus:ring-amber-100 outline-none resize-y min-h-[80px] shadow-sm transition-all"
-                                   placeholder="Eigene Gedanken, Todo's oder Zusammenfassungen zu diesem Dokument..."
+                                   className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all"
+                                   placeholder="Notizen zum Dokument..."
                                />
                            </div>
 
                            {selectedNote.type === 'pdf' && activeFileBlob ? (
-                                <div className="space-y-4">
-                                    <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-start gap-3">
-                                        <Info size={20} className="text-blue-500 shrink-0 mt-0.5" />
-                                        <div>
-                                            <h5 className="text-sm font-bold text-blue-700">Dokument Vorschau</h5>
-                                            <p className="text-xs text-blue-600 mt-1">
-                                                Datei: <span className="font-mono">{selectedNote.fileName}</span>
-                                            </p>
-                                        </div>
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1">
+                                        <FileText size={14} className="text-gray-400" />
+                                        <span className="font-mono truncate">{selectedNote.fileName}</span>
                                     </div>
-                                    <div className="overflow-x-auto">
+                                    <div className="overflow-x-auto border border-gray-200 rounded-lg">
                                         <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
                                     </div>
                                 </div>
                            ) : selectedNote.type === 'image' ? (
-                                <div className="space-y-4">
-                                    <div className="bg-purple-50 border border-purple-100 p-4 rounded-xl flex items-start gap-3">
-                                        <ImageIcon size={20} className="text-purple-500 shrink-0 mt-0.5" />
-                                        <div>
-                                            <h5 className="text-sm font-bold text-purple-700">Bild Vorschau</h5>
-                                            <p className="text-xs text-purple-600 mt-1">{selectedNote.fileName}</p>
-                                        </div>
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1">
+                                        <ImageIcon size={14} className="text-gray-400" />
+                                        <span className="font-mono truncate">{selectedNote.fileName}</span>
                                     </div>
                                     {/* Simplified Image Preview if activeFileBlob exists */}
                                     {activeFileBlob && (
-                                        <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                        <div className="rounded-lg border border-gray-200 overflow-hidden shadow-sm">
                                             <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
                                         </div>
                                     )}
-                                    <div className="space-y-2 mt-4">
-                                        <h5 className="text-xs font-black text-gray-400 uppercase tracking-widest">Extrahierter Text</h5>
-                                        <textarea className="w-full h-48 p-4 bg-white border border-gray-200 rounded-xl text-xs font-mono text-gray-600 leading-relaxed outline-none resize-none" value={selectedNote.content} readOnly />
+                                    <div className="space-y-1 mt-4">
+                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text</h5>
+                                        <textarea className="w-full h-32 p-3 bg-white border border-gray-200 rounded-lg text-xs font-mono text-gray-500 leading-relaxed outline-none resize-none" value={selectedNote.content} readOnly />
                                     </div>
                                 </div>
                             ) : (

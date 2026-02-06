@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChevronLeft, 
@@ -46,8 +45,8 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate }) => {
         "width": "100%",
         "height": "100%",
         "locale": "de_DE",
-        "importanceFilter": "-1,0,1",
-        "countryFilter": "us,eu,gb,ch"
+        "importanceFilter": "1", // Nur wichtige Daten (High Impact)
+        "countryFilter": "us"    // Nur USA
       });
       widgetRef.current.appendChild(script);
     }

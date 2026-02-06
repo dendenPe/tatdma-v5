@@ -1,5 +1,4 @@
 
-
 // GLOBAL CONSTANTS
 export const APP_VERSION = 'v5.0a';
 
@@ -84,14 +83,24 @@ export interface ChildDetails {
   konfession: string;
   haushalt: boolean;
   ausbildungsende?: string;
+  // Extended Child Info
+  staatsangehoerigkeit?: string;
+  adresse_kind?: string; // If different from recipient
+  
   // Recipient details (usually the other parent)
   empfaenger_vorname?: string;
   empfaenger_name?: string;
-  empfaenger_ort?: string;
+  empfaenger_strasse?: string;
+  empfaenger_plz_ort?: string;
+  empfaenger_land?: string;
+  empfaenger_geburtsdatum?: string;
+  empfaenger_staatsangehoerigkeit?: string;
+  
   // Specific Form 101 Fields
   sorgerecht_gemeinsam?: boolean;
   obhut_alternierend?: boolean;
   unterhalt_anderer_elternteil?: boolean;
+  
   // Frequency Logic
   paymentFrequency: 'fix' | 'individuell';
   monthlyAmounts: number[]; // 12 entries
@@ -99,10 +108,16 @@ export interface ChildDetails {
 }
 
 export interface AlimonyDetails {
-  empfaenger_name: string;
   empfaenger_vorname: string;
-  empfaenger_ort: string;
+  empfaenger_name: string;
+  empfaenger_strasse?: string;
+  empfaenger_plz_ort?: string;
+  empfaenger_land?: string;
+  empfaenger_geburtsdatum?: string;
+  empfaenger_staatsangehoerigkeit?: string;
+  
   getrennt_seit: string;
+  
   // Frequency Logic
   paymentFrequency: 'fix' | 'individuell';
   monthlyAmounts: number[]; // 12 entries
