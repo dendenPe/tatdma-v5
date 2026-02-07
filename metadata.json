@@ -1,0 +1,7 @@
+{
+  "name": "TaTDMA v5",
+  "description": "Professional Trade, Tax & Document Management System.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
