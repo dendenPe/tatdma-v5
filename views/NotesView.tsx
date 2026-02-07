@@ -49,7 +49,8 @@ import {
   Printer,
   Maximize,
   Minimize,
-  ShoppingBag
+  ShoppingBag,
+  Camera
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
@@ -427,6 +428,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastNoteIdRef = useRef<string | null>(null);
   const mobileImportInputRef = useRef<HTMLInputElement>(null);
+  const smartScanInputRef = useRef<HTMLInputElement>(null); // NEW: Smart Scan Ref
   const zipImportInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
 
@@ -774,6 +776,150 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       e.target.value = ''; 
   };
 
+  // --- NEW: MOBILE SMART SCAN DIRECT IMPORT ---
+  const handleMobileSmartScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files || e.target.files.length === 0) return;
+      
+      const apiKey = localStorage.getItem('tatdma_api_key');
+      if (!apiKey) {
+          alert("ACHTUNG: Kein API Key gefunden. Bitte in den Systemeinstellungen hinterlegen.");
+          e.target.value = '';
+          return;
+      }
+
+      setIsScanning(true);
+      setScanMessage({ text: "Analysiere mit AI...", type: 'info' });
+
+      // We process only the first file if multiple selected (Camera usually 1)
+      const file = e.target.files[0];
+
+      setTimeout(async () => {
+          try {
+              // 1. ANALYZE DIRECTLY
+              const aiResult = await GeminiService.analyzeDocument(file);
+              
+              if (!aiResult) throw new Error("AI konnte keine Daten extrahieren.");
+
+              // 2. PREPARE DATA STRUCTURES
+              const finalCategory = aiResult.category || 'Sonstiges';
+              const finalSubCategory = aiResult.subCategory; 
+              const finalYear = aiResult.date ? aiResult.date.split('-')[0] : new Date().getFullYear().toString();
+              const id = `doc_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+              
+              // Determine Type
+              let docType: NoteDocument['type'] = 'image';
+              if (file.type.includes('pdf')) docType = 'pdf';
+
+              // Rich HTML Content
+              let contentHtml = aiResult.summary || "Automatisch analysiert durch AI.";
+              if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
+                  const d = aiResult.dailyExpenseData;
+                  contentHtml += `
+                  <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
+                      <strong style="font-size:11px; text-transform:uppercase; color:#666;">Beleg Details:</strong><br/>
+                      <table style="width:100%; font-size:13px; margin-top:5px;">
+                          <tr><td style="color:#888;">Händler:</td><td><strong>${d.merchant}</strong></td></tr>
+                          <tr><td style="color:#888;">Betrag:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
+                          <tr><td style="color:#888;">Kategorie:</td><td>${d.expenseCategory}</td></tr>
+                          ${d.items && d.items.length > 0 ? `<tr><td style="color:#888; vertical-align:top;">Items:</td><td style="font-size:11px;">${d.items.join(', ')}</td></tr>` : ''}
+                      </table>
+                  </div>`;
+              }
+
+              // Save to DB (Local only since mobile)
+              await DBService.saveFile(id, file);
+              const receiptId = `receipt_scan_${Date.now()}`; // separate ID for expense linkage
+              await DBService.saveFile(receiptId, file);
+
+              // 3. CREATE EXPENSE OBJECTS
+              const newDailyExpenses: ExpenseEntry[] = [];
+              const newTaxExpenses: TaxExpense[] = [];
+              let generatedExpenseId = undefined;
+
+              if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
+                  const expense = aiResult.dailyExpenseData;
+                  generatedExpenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+                  newDailyExpenses.push({
+                      id: generatedExpenseId,
+                      date: aiResult.date || new Date().toISOString().split('T')[0],
+                      merchant: expense.merchant || 'Unbekannt',
+                      description: aiResult.title,
+                      amount: expense.amount || 0,
+                      currency: expense.currency || 'CHF',
+                      rate: 1, 
+                      category: (expense.expenseCategory as any) || 'Sonstiges',
+                      location: expense.location,
+                      receiptId: receiptId,
+                      isTaxRelevant: aiResult.isTaxRelevant,
+                      items: expense.items
+                  });
+              }
+
+              if (aiResult.isTaxRelevant && aiResult.taxData) {
+                  newTaxExpenses.push({
+                      desc: aiResult.title || file.name,
+                      amount: aiResult.taxData.amount || 0,
+                      currency: aiResult.taxData.currency || 'CHF',
+                      cat: (aiResult.taxData.taxCategory as any) || 'Sonstiges',
+                      year: finalYear,
+                      rate: 1, 
+                      receipts: [receiptId],
+                      taxRelevant: true
+                  });
+              }
+
+              // 4. CREATE NOTE DOCUMENT
+              const finalDoc: NoteDocument = {
+                  id,
+                  title: aiResult.title || file.name,
+                  type: docType,
+                  category: finalCategory,
+                  subCategory: finalSubCategory,
+                  year: finalYear,
+                  created: new Date().toISOString(),
+                  content: contentHtml,
+                  fileName: file.name,
+                  tags: ['Mobile-Scan', 'AI'],
+                  isNew: true,
+                  taxRelevant: aiResult.isTaxRelevant,
+                  isExpense: !!generatedExpenseId,
+                  expenseId: generatedExpenseId
+              };
+
+              // 5. UPDATE STATE
+              const newNotes = { ...(data.notes || {}) };
+              newNotes[id] = finalDoc;
+
+              let updatedTaxExpenses = [...data.tax.expenses, ...newTaxExpenses];
+              let updatedDailyExpenses = { ...(data.dailyExpenses || {}) };
+              
+              if (newDailyExpenses.length > 0) {
+                   const y = newDailyExpenses[0].date.split('-')[0];
+                   if (!updatedDailyExpenses[y]) updatedDailyExpenses[y] = [];
+                   updatedDailyExpenses[y] = [...updatedDailyExpenses[y], ...newDailyExpenses];
+              }
+
+              onUpdate({ 
+                  ...data, 
+                  notes: newNotes, 
+                  tax: { ...data.tax, expenses: updatedTaxExpenses },
+                  dailyExpenses: updatedDailyExpenses 
+              });
+
+              setScanMessage({ text: "Scan erfolgreich!", type: 'success' });
+              setSelectedCat('Inbox');
+
+          } catch (err: any) {
+              alert("Fehler beim Smart Scan: " + err.message);
+              setScanMessage({ text: "Fehler", type: 'warning' });
+          } finally {
+              setIsScanning(false);
+              setTimeout(() => setScanMessage(null), 3000);
+          }
+      }, 50);
+      e.target.value = '';
+  };
+
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -1048,6 +1194,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 {/* Subtle scanning indicator for mobile */}
                 {isScanning && <div className="p-2"><Loader2 size={16} className="animate-spin text-blue-500" /></div>}
                 
+                {/* SMART SCAN MOBILE BUTTON */}
+                <button onClick={() => smartScanInputRef.current?.click()} className="p-2 bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><Sparkles size={20} /></button>
+                <input type="file" ref={smartScanInputRef} capture="environment" accept="image/*" className="hidden" onChange={handleMobileSmartScan} />
+
                 <button onClick={() => zipImportInputRef.current?.click()} className="p-2 bg-purple-100 text-purple-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><FileArchive size={20} /></button>
                 <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
                 <button onClick={() => mobileImportInputRef.current?.click()} className="p-2 bg-[#16325c] text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><UploadCloud size={20} /></button>
