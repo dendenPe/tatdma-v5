@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Search, 
@@ -8,7 +7,7 @@ import {
   Trash2, 
   Tag, 
   Inbox, 
-  PenTool, 
+  PenTool,
   Loader2,
   Eye,
   Info,
@@ -691,7 +690,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
   // Actions
   const handleScanInbox = async (isManual: boolean = true) => {
-    // If auto scan (isManual=false), check connection but don't alert
     if (!VaultService.isConnected()) { 
         if (isManual) alert("Verwende den 'Import' Button auf mobilen Geräten."); 
         return; 
@@ -705,7 +703,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     
     setIsScanning(true);
     
-    // Only show banner if manual trigger
     if (isManual) setScanMessage({ text: "Synchronisiere Inbox...", type: 'info' });
     
     setTimeout(async () => {
@@ -751,7 +748,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
             } else {
                 if (isManual) { alert("Keine neuen Dateien."); setScanMessage(null); } 
                 else { 
-                    // Auto-scan finished empty - silent
                     setScanMessage(null);
                 }
             }
@@ -873,11 +869,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       if (selectedNote.isExpense) {
           const year = selectedNote.year || new Date().getFullYear().toString();
           let currentYearExpenses = data.dailyExpenses?.[year] || [];
-          // Filter out by linked ID or by matching title roughly if ID missing
           if (selectedNote.expenseId) {
               currentYearExpenses = currentYearExpenses.filter(e => e.id !== selectedNote.expenseId);
           } else {
-              // Fallback logic
               currentYearExpenses = currentYearExpenses.filter(e => e.description !== selectedNote.title);
           }
           
@@ -887,21 +881,16 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
 
       // ADD to Expenses
-      // Extract data from HTML content if possible (regex fallback)
       let amount = 0;
       let currency = 'CHF';
       let merchant = 'Unbekannt';
       
       const html = selectedNote.content || '';
       
-      // Improved Regex for amount extraction
-      // Look for bolded amounts typical in AI output: "<strong>4.40 CHF</strong>" or "<strong>4.40</strong>"
-      // Also handles "4'200.00"
       const amountMatch = html.match(/Betrag:.*?<strong>([\d\.'’]+)\s*(\w*)<\/strong>/) || html.match(/(\d+[\.,]\d{2})\s?(CHF|EUR|USD)/);
       const merchantMatch = html.match(/Händler:.*?<strong>(.*?)<\/strong>/);
       
       if (amountMatch) {
-          // Remove Swiss thousand separators (')
           const rawAmount = amountMatch[1].replace(/['’]/g, '');
           amount = parseFloat(rawAmount);
           if (amountMatch[2]) currency = amountMatch[2];
@@ -916,11 +905,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           amount = parseFloat(manualAmount);
       }
 
-      // Use the year from the note if available, otherwise current year
       const year = selectedNote.year || new Date().getFullYear().toString();
       const expenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
       
-      // Save Receipt Link
       let receiptId = undefined;
       let fileBlob = await DBService.getFile(selectedNote.id);
       if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
@@ -933,9 +920,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
       const newEntry: ExpenseEntry = {
           id: expenseId,
-          // If note is from previous year, try to guess date or default to YYYY-01-01? 
-          // Better: Use today's date if year matches current, else jan 1st of that year?
-          // Actually, let's just use today's date but respect the Note Year for the Year Bucket.
           date: new Date().toISOString().split('T')[0], 
           merchant: merchant,
           description: selectedNote.title,
@@ -950,7 +934,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       const currentYearExpenses = data.dailyExpenses?.[year] || [];
       const updatedDailyExpenses = { ...data.dailyExpenses, [year]: [...currentYearExpenses, newEntry] };
 
-      // CRITICAL FIX: Construct full update objects to prevent race condition between updateSelectedNote and onUpdate
       const updatedNote = { ...selectedNote, isExpense: true, expenseId: expenseId };
       const updatedNotes = { ...data.notes, [selectedNoteId]: updatedNote };
 
@@ -1183,7 +1166,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       <div className={`flex-1 flex flex-col bg-gray-50/30 ${selectedNoteId ? 'fixed inset-0 z-[100] bg-white md:static h-[100dvh]' : 'hidden md:flex'}`}>
          {selectedNote ? (
              <>
-                <div className="px-4 py-3 border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 safe-area-top gap-y-2">
+                {/* MODIFIED HEADER WITH SAFE AREA PADDING */}
+                <div className="px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 gap-y-2">
                     <div className="flex items-center gap-3 flex-1 mr-2 overflow-hidden min-w-[200px]">
                         <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full shrink-0"><ArrowLeft size={20} /></button>
                         <div className="flex-1 min-w-0">
