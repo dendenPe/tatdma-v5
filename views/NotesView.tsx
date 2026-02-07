@@ -8,7 +8,7 @@ import {
   Trash2, 
   Tag, 
   Inbox, 
-  PenTool,
+  PenTool, 
   Loader2,
   Eye,
   Info,
@@ -45,7 +45,8 @@ import {
   ChevronDown,
   ChevronRight,
   BrainCircuit,
-  StickyNote
+  StickyNote,
+  Edit3
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
@@ -351,6 +352,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   const [isAnalyzingTax, setIsAnalyzingTax] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false); // For general AI analysis
   
+  // Local state for subcategory input (to prevent frequent updates)
+  const [tempSubCategory, setTempSubCategory] = useState<string>('');
+  const [isUpdatingCategory, setIsUpdatingCategory] = useState(false); // Lock for async updates
+
   // Layout Resizing State
   const [layout, setLayout] = useState({ sidebarW: 280, listW: 320 });
   const [isResizing, setIsResizing] = useState<null | 'sidebar' | 'list'>(null);
@@ -407,6 +412,17 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           onUpdate({ ...data, notes: newNotes });
       }
   }, []);
+
+  const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
+
+  // --- SYNC TEMP SUB CATEGORY STATE ---
+  useEffect(() => {
+      if (selectedNote) {
+          setTempSubCategory(selectedNote.subCategory || '');
+      } else {
+          setTempSubCategory('');
+      }
+  }, [selectedNoteId, selectedNote?.subCategory]);
 
   // --- RESIZING HANDLERS ---
   const startResizing = (type: 'sidebar' | 'list') => (e: React.MouseEvent) => {
@@ -472,8 +488,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       return matchesMainCat && matchesSubCat && matchesSearch;
     });
   }, [notesList, selectedCat, selectedSubCat, searchQuery]);
-
-  const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
 
   // --- EFFECT: LOAD FILE BLOB ON SELECTION ---
   useEffect(() => {
@@ -1143,19 +1157,33 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     }
   };
 
+  // UPDATED CHANGE CATEGORY FUNCTION
   const changeCategory = async (newCat: DocCategory, newSubCat?: string) => {
-      if (!selectedNoteId || !selectedNote) return;
-      // If nothing changed, do nothing
-      if (selectedNote.category === newCat && selectedNote.subCategory === newSubCat) return;
+      if (!selectedNoteId || !selectedNote || isUpdatingCategory) return;
+      
+      // Normalize empty strings to undefined
+      const cleanSubCat = newSubCat === '' ? undefined : newSubCat;
+      const currentSubCat = selectedNote.subCategory === '' ? undefined : selectedNote.subCategory;
 
+      // If nothing changed, do nothing
+      if (selectedNote.category === newCat && currentSubCat === cleanSubCat) return;
+
+      setIsUpdatingCategory(true);
       setIsCreatingCat(false);
       setNewCatName('');
 
-      if (selectedNote.filePath && VaultService.isConnected()) {
-          const updatedDoc = await DocumentService.moveFile(selectedNote, newCat, newSubCat);
-          onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedDoc } });
-      } else {
-          updateSelectedNote({ category: newCat, subCategory: newSubCat });
+      try {
+          if (selectedNote.filePath && VaultService.isConnected()) {
+              const updatedDoc = await DocumentService.moveFile(selectedNote, newCat, cleanSubCat);
+              onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedDoc } });
+          } else {
+              updateSelectedNote({ category: newCat, subCategory: cleanSubCat });
+          }
+      } catch (err) {
+          console.error("Failed to change category", err);
+          alert("Fehler beim Verschieben: " + err);
+      } finally {
+          setIsUpdatingCategory(false);
       }
   };
 
@@ -1345,7 +1373,16 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
             {/* Dynamic Categories with Sub-Categories (Accordion) */}
             {CATEGORY_KEYS.filter(c => c !== 'Inbox').map(catName => {
-                const subCats = CATEGORY_STRUCTURE[catName];
+                // MERGE STATIC AND DYNAMIC SUBCATEGORIES
+                const staticSubCats = CATEGORY_STRUCTURE[catName] || [];
+                const dynamicSubCats = Array.from(new Set(
+                    notesList
+                        .filter(n => n.category === catName && n.subCategory)
+                        .map(n => n.subCategory!)
+                ));
+                // Only keep subcategories that are either static OR have at least 1 document (dynamic)
+                const subCats = Array.from(new Set([...staticSubCats, ...dynamicSubCats])).sort();
+
                 const isExpanded = expandedCats[catName];
                 const docCount = notesList.filter(n => n.category === catName).length;
 
@@ -1384,6 +1421,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                         <div className="pl-9 pr-2 space-y-0.5 mt-0.5 mb-1 animate-in slide-in-from-top-1 fade-in duration-200">
                             {subCats.map(sub => {
                                 const subCount = notesList.filter(n => n.category === catName && n.subCategory === sub).length;
+                                // ONLY RENDER if it's a static subcat OR it has items.
+                                // This hides "ghost" categories that might technically exist in dynamic set but have 0 items (shouldn't happen with filter above, but extra safety).
+                                if (subCount === 0 && !staticSubCats.includes(sub)) return null;
+
                                 return (
                                     <button 
                                         key={sub}
@@ -1391,7 +1432,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                         className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition-colors ${selectedCat === catName && selectedSubCat === sub ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
                                     >
                                         <span className="truncate">{sub}</span>
-                                        {subCount > 0 && <span className="text-[9px] opacity-60">{subCount}</span>}
+                                        {/* Display Count explicitly so user knows if file exists */}
+                                        <span className="text-[9px] opacity-60">{subCount}</span>
                                     </button>
                                 );
                             })}
@@ -1536,6 +1578,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                 <select 
                                     value={selectedNote.category} 
                                     onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} // Reset subcat on main change
+                                    disabled={isUpdatingCategory}
                                     className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" 
                                     title="Kategorie ändern"
                                 >
@@ -1544,19 +1587,57 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                 
                                 <span className="text-gray-300">/</span>
                                 
+                                {/* Dynamic Sub-Category Input or Select */}
                                 {CATEGORY_STRUCTURE[selectedNote.category]?.length > 0 ? (
                                     <select 
                                         value={selectedNote.subCategory || ''}
                                         onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)}
+                                        disabled={isUpdatingCategory}
                                         className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors"
                                     >
                                         <option value="">(Keine Unterkategorie)</option>
                                         {CATEGORY_STRUCTURE[selectedNote.category].map(sub => (
                                             <option key={sub} value={sub}>{sub}</option>
                                         ))}
+                                        {/* Show currently selected if it's custom and not in list */}
+                                        {selectedNote.subCategory && !CATEGORY_STRUCTURE[selectedNote.category].includes(selectedNote.subCategory) && (
+                                            <option value={selectedNote.subCategory}>{selectedNote.subCategory} (Custom)</option>
+                                        )}
                                     </select>
                                 ) : (
-                                    <span className="text-[10px] text-gray-300 italic">n/a</span>
+                                    <div className="relative group flex items-center gap-1">
+                                        <input 
+                                            type="text"
+                                            value={tempSubCategory} // Use local state
+                                            onChange={(e) => setTempSubCategory(e.target.value)} // Update only local state
+                                            onBlur={() => { 
+                                                // Only trigger if changed and different from current prop
+                                                if(tempSubCategory === (selectedNote.subCategory || '')) return;
+                                                const newVal = tempSubCategory.trim() || undefined;
+                                                changeCategory(selectedNote.category, newVal); 
+                                            }}
+                                            placeholder="Unterkategorie..."
+                                            disabled={isUpdatingCategory}
+                                            className={`text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none font-medium hover:border-gray-300 transition-colors w-32 focus:w-48 focus:ring-1 focus:ring-blue-100 ${isUpdatingCategory ? 'opacity-50 cursor-wait' : ''}`}
+                                        />
+                                        {/* EXPLICIT SAVE BUTTON */}
+                                        {tempSubCategory !== (selectedNote.subCategory || '') && !isUpdatingCategory && (
+                                            <button 
+                                                onClick={() => {
+                                                    const newVal = tempSubCategory.trim() || undefined;
+                                                    changeCategory(selectedNote.category, newVal);
+                                                }}
+                                                className="p-1 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors shadow-sm"
+                                                title="Speichern"
+                                            >
+                                                <Check size={10} />
+                                            </button>
+                                        )}
+                                        {isUpdatingCategory && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                                        {!isUpdatingCategory && tempSubCategory === (selectedNote.subCategory || '') && (
+                                            <Edit3 size={10} className="absolute right-2 top-1.5 text-gray-300 pointer-events-none" />
+                                        )}
+                                    </div>
                                 )}
 
                                 <div className="w-px h-3 bg-gray-200 mx-1"></div>
@@ -1766,9 +1847,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          )}
       </div>
 
-      {/* MODAL: CREATE TABLE */}
+      {/* MODAL: CREATE TABLE - HIGH Z-INDEX */}
       {tableModal.open && (
-          <div className="absolute inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="absolute inset-0 z-[1400] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4 animate-in zoom-in-95">
                   <div className="flex items-center justify-between border-b border-gray-100 pb-3">
                       <h3 className="font-bold text-gray-800 flex items-center gap-2"><TableIcon size={18} className="text-blue-500"/> Tabelle erstellen</h3>
@@ -1789,9 +1870,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
       )}
 
-      {/* MODAL: MANAGE RULES */}
+      {/* MODAL: MANAGE RULES - HIGH Z-INDEX */}
       {ruleModalCat && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+          <div className="absolute inset-0 z-[1400] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
               <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 max-w-full space-y-4 animate-in zoom-in-95 duration-200">
                   <div className="flex items-center justify-between border-b border-gray-100 pb-4">
                       <div className="flex items-center gap-2"><Tag size={18} className="text-blue-500" /><div><h3 className="font-bold text-gray-800">Stichwörter</h3><p className="text-xs text-gray-400">Für Kategorie: <span className="font-bold text-blue-600">{ruleModalCat}</span></p></div></div>

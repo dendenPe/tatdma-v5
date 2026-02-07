@@ -54,9 +54,10 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   const removeTrade = (index: number) => {
     const newTrades = entry.trades.filter((_, i) => i !== index);
     const newFees = newTrades.reduce((s, t) => s + (t.fee || 0), 0);
-    const newTotal = newTrades.reduce((s, t) => s + (t.pnl || 0), 0) - newFees;
+    const newTotalGross = newTrades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
     
-    setEntry({ ...entry, trades: newTrades, total: newTotal, fees: newFees });
+    // Recalculate Net Total (Gross - Fees)
+    setEntry({ ...entry, trades: newTrades, total: newTotalGross - newFees, fees: newFees });
   };
 
   const updateTrade = (index: number, field: keyof Trade, value: any) => {
@@ -79,8 +80,6 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
     if (entry.trades.length > 0 || entry.note.trim() || entry.total !== 0) {
         newData.trades[currentDate] = entry;
     } else {
-        // If empty, verify if we should delete the key? 
-        // Better to keep it explicit or just update.
         newData.trades[currentDate] = entry;
     }
     onUpdate(newData);
@@ -106,37 +105,55 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
           } else {
               const existingDay = newData.trades[date];
               if (importedEntry.note) existingDay.note = importedEntry.note;
-              if (importedEntry.total !== 0 || importedEntry.trades.length > 0) existingDay.total = importedEntry.total;
-
-              const uniqueNewTrades: Trade[] = [];
-              let addedFees = 0;
-
-              importedEntry.trades.forEach(newTrade => {
-                  const isDuplicate = existingDay.trades.some(existing => 
-                      existing.inst === newTrade.inst &&
-                      Math.abs(existing.pnl - newTrade.pnl) < 0.01 && 
-                      existing.start === newTrade.start
-                  );
-                  if (!isDuplicate) {
-                      uniqueNewTrades.push(newTrade);
-                      addedFees += (newTrade.fee || 0);
+              
+              // MERGE TRADES INTELLIGENTLY
+              // 1. Check if the IMPORT contains aggregated trades
+              const hasAggregatedImports = importedEntry.trades.some(t => t.strategy?.includes('Agg'));
+              
+              if (hasAggregatedImports) {
+                  // If we are importing aggregated data (Execution Report), we assume this replaces 
+                  // any previous aggregated data for this day to avoid duplication.
+                  // We KEEP manual trades (those without 'Agg' strategy).
+                  const manualTrades = existingDay.trades.filter(t => !t.strategy?.includes('Agg'));
+                  
+                  // Now add the new imported trades
+                  existingDay.trades = [...manualTrades, ...importedEntry.trades];
+                  count += importedEntry.trades.length;
+              } else {
+                  // Standard Merge for individual trades
+                  const uniqueNewTrades: Trade[] = [];
+                  importedEntry.trades.forEach(newTrade => {
+                      const isDuplicate = existingDay.trades.some(existing => 
+                          existing.inst === newTrade.inst &&
+                          Math.abs(existing.pnl - newTrade.pnl) < 0.01 && 
+                          existing.start === newTrade.start
+                      );
+                      if (!isDuplicate) {
+                          uniqueNewTrades.push(newTrade);
+                      }
+                  });
+                  if (uniqueNewTrades.length > 0) {
+                      existingDay.trades = [...existingDay.trades, ...uniqueNewTrades];
+                      count += uniqueNewTrades.length;
                   }
-              });
-
-              if (uniqueNewTrades.length > 0) {
-                  existingDay.trades = [...existingDay.trades, ...uniqueNewTrades];
-                  existingDay.fees = (existingDay.fees || 0) + addedFees;
-                  count += uniqueNewTrades.length;
               }
+
+              // FORCE RECALCULATE TOTALS from the Trade List
+              // This fixes the "4x fees" bug where we kept adding to the daily total blindly.
+              const recalcGross = existingDay.trades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
+              const recalcFees = existingDay.trades.reduce((s, t) => s + (Number(t.fee) || 0), 0);
+              
+              existingDay.fees = recalcFees;
+              existingDay.total = recalcGross - recalcFees; // Net PnL
           }
       });
 
       onUpdate(newData);
       // Refresh view if current day was affected
-      if (importedDays[currentDate]) {
+      if (importedDays[currentDate] || newData.trades[currentDate]) {
           setEntry(newData.trades[currentDate]);
       }
-      alert(`${count} Trades importiert.`);
+      alert(`${count} Trades importiert / aktualisiert.`);
       e.target.value = '';
     };
     reader.readAsText(file);
@@ -205,7 +222,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
             <div className="p-6 space-y-4">
               <div className="flex gap-4">
                 <div className="flex-1 space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Netto PnL (inkl. Gebühren) $</label>
+                  <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Netto PnL (nach Gebühren) $</label>
                   <input 
                     type="number"
                     value={entry.total}
