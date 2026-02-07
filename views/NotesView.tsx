@@ -45,16 +45,9 @@ import {
   ChevronRight,
   BrainCircuit,
   StickyNote,
-  Share2,
-  Printer,
-  Maximize,
-  Minimize,
-  ShoppingBag,
-  Camera
+  ShoppingBag
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
-// @ts-ignore
-import heic2any from 'heic2any';
 import { AppData, NoteDocument, DocCategory, TaxExpense, CATEGORY_STRUCTURE, ExpenseEntry } from '../types';
 import { DocumentService } from '../services/documentService';
 import { VaultService } from '../services/vaultService';
@@ -73,8 +66,7 @@ interface Props {
   onUpdate: (data: AppData) => void;
 }
 
-// Map the new constant to UI friendly definition if needed, 
-// but we can just iterate CATEGORY_STRUCTURE keys
+// Map the new constant to UI friendly definition
 const CATEGORY_KEYS = Object.keys(CATEGORY_STRUCTURE);
 
 // Mapping helper for migration
@@ -95,78 +87,6 @@ const stripHtml = (html: string) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    return tmp.textContent || tmp.innerText || "";
-};
-
-// --- SEARCH CONTEXT HELPER (Moved outside component) ---
-const renderNotePreview = (content: string, query: string) => {
-    const cleanContent = stripHtml(content).replace(/\s+/g, ' ').trim();
-    
-    if (!query.trim()) {
-        return <span className="text-gray-400">{cleanContent.substring(0, 90)}{cleanContent.length > 90 ? '...' : ''}</span>;
-    }
-
-    const idx = cleanContent.toLowerCase().indexOf(query.toLowerCase());
-    if (idx === -1) return <span className="text-gray-400">{cleanContent.substring(0, 90)}...</span>;
-
-    const padding = 35; 
-    const start = Math.max(0, idx - padding);
-    const end = Math.min(cleanContent.length, idx + query.length + padding);
-    
-    const snippet = cleanContent.substring(start, end);
-    const parts = snippet.split(new RegExp(`(${query})`, 'gi'));
-
-    return (
-        <span className="text-gray-500">
-            {start > 0 && "..."}
-            {parts.map((part, i) => 
-                part.toLowerCase() === query.toLowerCase() 
-                ? <span key={i} className="bg-yellow-200 text-gray-900 font-bold px-0.5 rounded box-decoration-clone">{part}</span>
-                : part
-            )}
-            {end < cleanContent.length && "..."}
-        </span>
-    );
-};
-
-// --- COMPONENT: BLOB IMAGE (Handles HEIC) ---
-const BlobImage = ({ blob, alt, className }: { blob: Blob, alt: string, className?: string }) => {
-  const [src, setSrc] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let isMounted = true;
-    const load = async () => {
-        if (!blob) return;
-        setLoading(true);
-        setError(false);
-        
-        try {
-            // Check for HEIC
-            const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif';
-            
-            if (isHeic) {
-               const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
-               const resBlob = Array.isArray(result) ? result[0] : result;
-               if (isMounted) setSrc(URL.createObjectURL(resBlob));
-            } else {
-               if (isMounted) setSrc(URL.createObjectURL(blob));
-            }
-        } catch (e) {
-            console.error("Image Load Error (BlobImage):", e);
-            if (isMounted) setSrc(URL.createObjectURL(blob));
-        } finally {
-            if (isMounted) setLoading(false);
-        }
-    };
-    load();
-    return () => { isMounted = false; };
-  }, [blob]);
-
-  if (loading) return <div className={`flex items-center justify-center bg-gray-100 text-gray-400 animate-pulse ${className}`}><Loader2 className="animate-spin" /></div>;
-  if (!src) return <div className={`flex items-center justify-center bg-gray-100 text-red-400 text-xs ${className}`}>Bildfehler</div>;
-  
-  return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
 };
 
 // --- SUB-COMPONENT: PDF PAGE RENDERER WITH OPTIONAL LENS ---
@@ -321,8 +241,8 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
                 setPdf(loadedPdf);
 
                 const loadedPages = [];
-                // Limit to first 5 pages for performance in preview, unless full view needed
-                const numPagesToRender = Math.min(loadedPdf.numPages, 10);
+                // Limit to first 5 pages for performance in preview
+                const numPagesToRender = Math.min(loadedPdf.numPages, 5);
                 for (let i = 1; i <= numPagesToRender; i++) {
                     loadedPages.push(await loadedPdf.getPage(i));
                 }
@@ -340,13 +260,12 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
 
         const updateScale = () => {
             if (!containerRef.current || pages.length === 0) return;
-            const containerWidth = containerRef.current.clientWidth - 24; // Reduced Padding
+            const containerWidth = containerRef.current.clientWidth - 32; // Reduced Padding
             const page = pages[0];
             const viewport = page.getViewport({ scale: 1.0 });
             
             let newScale = containerWidth / viewport.width;
-            // Limit scale to avoid blurriness on huge screens, but ensure fit on mobile
-            if (newScale > 2.5) newScale = 2.5;
+            if (newScale > 2.0) newScale = 2.0;
             if (newScale < 0.1) newScale = 0.1;
             setScale(newScale);
         };
@@ -356,7 +275,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
         });
 
         observer.observe(containerRef.current);
-        updateScale(); // Initial delay slightly
+        updateScale(); // Initial
 
         return () => observer.disconnect();
     }, [pages]);
@@ -364,13 +283,13 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
     if (!pdf) return <div className="flex items-center justify-center h-48"><Loader2 className="animate-spin text-blue-500" /></div>;
 
     return (
-        <div ref={containerRef} className="w-full bg-gray-100/50 rounded-lg p-2 overflow-y-auto h-full text-center">
+        <div ref={containerRef} className="w-full bg-gray-100 rounded-lg p-2 overflow-y-auto max-h-[calc(100vh-250px)] text-center">
             {pages.map((page, idx) => (
                 <PdfPage key={idx} page={page} scale={scale} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
             ))}
-            {pdf.numPages > 10 && (
-                <div className="text-center text-xs text-gray-400 py-4 font-bold uppercase tracking-widest">
-                    ... {pdf.numPages - 10} weitere Seiten (Download für volle Ansicht)
+            {pdf.numPages > 5 && (
+                <div className="text-center text-xs text-gray-400 py-2">
+                    ... {pdf.numPages - 5} weitere Seiten (Download zum Ansehen)
                 </div>
             )}
         </div>
@@ -380,18 +299,14 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
 
 const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   const [selectedCat, setSelectedCat] = useState<string | 'All'>('All');
-  const [selectedSubCat, setSelectedSubCat] = useState<string | null>(null);
+  const [selectedSubCat, setSelectedSubCat] = useState<string | null>(null); // Sidebar filter for subcat
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
   const [isAnalyzingTax, setIsAnalyzingTax] = useState(false);
-  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false); // For general AI analysis
   
-  // Local state for subcategory input
-  const [tempSubCategory, setTempSubCategory] = useState<string>('');
-  const [isUpdatingCategory, setIsUpdatingCategory] = useState(false);
-
   // Layout Resizing State
   const [layout, setLayout] = useState({ sidebarW: 280, listW: 320 });
   const [isResizing, setIsResizing] = useState<null | 'sidebar' | 'list'>(null);
@@ -399,15 +314,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   
   // File Preview State
   const [activeFileBlob, setActiveFileBlob] = useState<Blob | null>(null);
-  const [isLensEnabled, setIsLensEnabled] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false); // NEW: Fullscreen state
+  const [isLensEnabled, setIsLensEnabled] = useState(false); // Zoom Lens Toggle
   
   // UI States for Feedback
   const [scanMessage, setScanMessage] = useState<{text: string, type: 'success'|'info'|'warning'} | null>(null);
   const [lastScanTime, setLastScanTime] = useState<string | null>(null);
   
+  // UI State for creating new category (Now mostly for Main Category switching)
   const [isCreatingCat, setIsCreatingCat] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
+  const [newCatName, setNewCatName] = useState(''); // Legacy prop used for manual input, now selects main cat
 
   // UI State for Managing Rules
   const [ruleModalCat, setRuleModalCat] = useState<string | null>(null);
@@ -428,45 +343,45 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastNoteIdRef = useRef<string | null>(null);
   const mobileImportInputRef = useRef<HTMLInputElement>(null);
-  const smartScanInputRef = useRef<HTMLInputElement>(null); // NEW: Smart Scan Ref
   const zipImportInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
 
-  // --- MIGRATION LOGIC ---
+  // --- MIGRATION LOGIC (Old -> New Categories) ---
   useEffect(() => {
       let needsUpdate = false;
       const newNotes = { ...data.notes };
+      
       Object.values(newNotes).forEach((note: any) => {
           if (OLD_TO_NEW_MAP[note.category]) {
               note.category = OLD_TO_NEW_MAP[note.category];
               needsUpdate = true;
           }
       });
-      if (needsUpdate) onUpdate({ ...data, notes: newNotes });
-  }, []);
 
-  const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
-
-  useEffect(() => {
-      if (selectedNote) {
-          setTempSubCategory(selectedNote.subCategory || '');
-          setIsFullscreen(false); // Reset fullscreen on note change
-      } else {
-          setTempSubCategory('');
+      if (needsUpdate) {
+          console.log("Migration applied: Updating categories...");
+          onUpdate({ ...data, notes: newNotes });
       }
-  }, [selectedNoteId, selectedNote?.subCategory]);
+  }, []);
 
   // --- RESIZING HANDLERS ---
   const startResizing = (type: 'sidebar' | 'list') => (e: React.MouseEvent) => {
       e.preventDefault();
       setIsResizing(type);
-      resizeRef.current = { startX: e.clientX, startSidebarW: layout.sidebarW, startListW: layout.listW };
+      resizeRef.current = {
+          startX: e.clientX,
+          startSidebarW: layout.sidebarW,
+          startListW: layout.listW
+      };
+      // Force cursor to stay col-resize even if mouse leaves the handle line during fast drag
       document.body.style.cursor = 'col-resize';
   };
 
   const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
       if (!isResizing || !resizeRef.current) return;
+      
       const delta = e.clientX - resizeRef.current.startX;
+
       if (isResizing === 'sidebar') {
           const newW = Math.max(200, Math.min(400, resizeRef.current.startSidebarW + delta));
           setLayout(prev => ({ ...prev, sidebarW: newW }));
@@ -499,12 +414,22 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     return notesList.filter(note => {
       const matchesMainCat = selectedCat === 'All' || note.category === selectedCat;
       const matchesSubCat = !selectedSubCat || note.subCategory === selectedSubCat;
-      if (selectedCat === 'Inbox') return note.category === 'Inbox';
+      
+      // Special logic for Inbox virtual view
+      if (selectedCat === 'Inbox') {
+          return note.category === 'Inbox';
+      }
+
       const cleanContent = stripHtml(note.content).toLowerCase();
-      const matchesSearch = !searchQuery || note.title.toLowerCase().includes(searchQuery.toLowerCase()) || cleanContent.includes(searchQuery.toLowerCase());
+      const matchesSearch = !searchQuery || 
+        note.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        cleanContent.includes(searchQuery.toLowerCase());
+      
       return matchesMainCat && matchesSubCat && matchesSearch;
     });
   }, [notesList, selectedCat, selectedSubCat, searchQuery]);
+
+  const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
 
   // --- EFFECT: LOAD FILE BLOB ON SELECTION ---
   useEffect(() => {
@@ -515,7 +440,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
               if (!blob && selectedNote.filePath && VaultService.isConnected()) {
                   blob = await DocumentService.getFileFromVault(selectedNote.filePath);
               }
-              if (blob && !blob.type) blob = new Blob([blob], { type: 'application/pdf' });
               if (blob) setActiveFileBlob(blob);
           } else if (selectedNote && selectedNote.type === 'image') {
               let blob = await DBService.getFile(selectedNote.id);
@@ -533,65 +457,22 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     if (VaultService.isConnected()) {
         const timer = setTimeout(() => {
             if (!isScanning) {
-                handleScanInbox(false); // false = auto, silent
+                handleScanInbox(false); 
             }
         }, 800);
         return () => clearTimeout(timer);
     }
-  }, []);
+  }, []); 
 
-  // --- SHARE FUNCTION ---
-  const handleShare = async () => {
-      if (!activeFileBlob || !selectedNote) return;
-      
-      try {
-          // Construct a File object
-          const ext = selectedNote.type === 'pdf' ? '.pdf' : '.jpg';
-          const fileName = (selectedNote.fileName || selectedNote.title).endsWith(ext) 
-              ? (selectedNote.fileName || selectedNote.title) 
-              : (selectedNote.fileName || selectedNote.title) + ext;
-              
-          const file = new File([activeFileBlob], fileName, { type: activeFileBlob.type || (selectedNote.type === 'pdf' ? 'application/pdf' : 'image/jpeg') });
-
-          // Web Share API Level 2 supports files
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              await navigator.share({
-                  files: [file],
-                  title: selectedNote.title,
-                  text: 'Dokument aus TaTDMA v5'
-              });
-          } else {
-              // Fallback
-              alert("Teilen wird auf diesem Gerät/Browser nicht nativ unterstützt. Datei wird heruntergeladen.");
-              const url = URL.createObjectURL(activeFileBlob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = fileName;
-              a.click();
-          }
-      } catch (error: any) {
-          if (error.name !== 'AbortError') {
-              console.error('Error sharing:', error);
-              alert('Fehler beim Teilen: ' + error.message);
-          }
-      }
-  };
-
-  // --- OPEN/PRINT FUNCTION ---
-  const handleOpenExternal = () => {
-      if (!activeFileBlob) return;
-      const url = URL.createObjectURL(activeFileBlob);
-      window.open(url, '_blank');
-  };
-
-  // --- EDITOR SYNC ---
+  // --- EDITOR SYNC (Fix for Backwards Typing) ---
   useEffect(() => {
       if (selectedNoteId && data.notes[selectedNoteId] && data.notes[selectedNoteId].type === 'note' && editorRef.current) {
           const noteContent = data.notes[selectedNoteId].content;
           if (lastNoteIdRef.current !== selectedNoteId) {
               editorRef.current.innerHTML = noteContent;
               lastNoteIdRef.current = selectedNoteId;
-          } else if (editorRef.current.innerHTML !== noteContent) {
+          } 
+          else if (editorRef.current.innerHTML !== noteContent) {
                if (document.activeElement !== editorRef.current) {
                    editorRef.current.innerHTML = noteContent;
                }
@@ -599,11 +480,42 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   }, [selectedNoteId, data.notes]);
 
-  // --- RICH TEXT ACTIONS (abbreviated) ---
+  // --- SEARCH CONTEXT HELPER ---
+  const renderNotePreview = (content: string, query: string) => {
+      const cleanContent = stripHtml(content).replace(/\s+/g, ' ').trim();
+      
+      if (!query.trim()) {
+          return <span className="text-gray-400">{cleanContent.substring(0, 90)}{cleanContent.length > 90 ? '...' : ''}</span>;
+      }
+
+      const idx = cleanContent.toLowerCase().indexOf(query.toLowerCase());
+      if (idx === -1) return <span className="text-gray-400">{cleanContent.substring(0, 90)}...</span>;
+
+      const padding = 35; 
+      const start = Math.max(0, idx - padding);
+      const end = Math.min(cleanContent.length, idx + query.length + padding);
+      
+      const snippet = cleanContent.substring(start, end);
+      const parts = snippet.split(new RegExp(`(${query})`, 'gi'));
+
+      return (
+          <span className="text-gray-500">
+              {start > 0 && "..."}
+              {parts.map((part, i) => 
+                  part.toLowerCase() === query.toLowerCase() 
+                  ? <span key={i} className="bg-yellow-200 text-gray-900 font-bold px-0.5 rounded box-decoration-clone">{part}</span>
+                  : part
+              )}
+              {end < cleanContent.length && "..."}
+          </span>
+      );
+  };
+
+  // --- RICH TEXT ACTIONS ---
   const execCmd = (command: string, value: string | undefined = undefined) => {
       document.execCommand(command, false, value);
       editorRef.current?.focus();
-      handleEditorInput(); 
+      handleEditorInput(); // Trigger Save
   };
 
   const updateSelectedNote = (updates: Partial<NoteDocument>) => {
@@ -613,7 +525,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   };
 
   const handleEditorInput = () => {
+      // FIX: Race condition guard
       if (lastNoteIdRef.current !== selectedNoteId) return;
+
       if (editorRef.current && selectedNoteId) {
           const html = editorRef.current.innerHTML;
           updateSelectedNote({ content: html });
@@ -621,495 +535,563 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       checkTableContext();
   };
 
-  // --- TABLE LOGIC (abbreviated) ---
+  // --- TABLE LOGIC ---
   const checkTableContext = () => {
       const selection = window.getSelection();
-      if (!selection || !selection.anchorNode) { setActiveTableCtx(null); return; }
+      if (!selection || !selection.anchorNode) {
+          setActiveTableCtx(null);
+          return;
+      }
+
       let node: Node | null = selection.anchorNode;
+      // Traverse up to find TD and Table
       let td: HTMLTableCellElement | null = null;
       let table: HTMLTableElement | null = null;
+
       while (node && node !== editorRef.current) {
-          if (node.nodeName === 'TD' || node.nodeName === 'TH') td = node as HTMLTableCellElement;
-          if (node.nodeName === 'TABLE') { table = node as HTMLTableElement; break; }
+          if (node.nodeName === 'TD' || node.nodeName === 'TH') {
+              td = node as HTMLTableCellElement;
+          }
+          if (node.nodeName === 'TABLE') {
+              table = node as HTMLTableElement;
+              break;
+          }
           node = node.parentNode;
       }
+
       if (table && td) {
-          setActiveTableCtx({ table, rowIndex: (td.parentNode as HTMLTableRowElement).rowIndex, colIndex: td.cellIndex });
-      } else { setActiveTableCtx(null); }
+          // Calculate row/col index
+          const rowIndex = (td.parentNode as HTMLTableRowElement).rowIndex;
+          const colIndex = td.cellIndex;
+          setActiveTableCtx({ table, rowIndex, colIndex });
+      } else {
+          setActiveTableCtx(null);
+      }
   };
 
   const insertTable = () => {
+      // 1. SAVE CURRENT SELECTION
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
           const range = selection.getRangeAt(0);
-          if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) savedRangeRef.current = range.cloneRange();
+          if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+              savedRangeRef.current = range.cloneRange();
+          }
       }
+      // Open modal
       setTableModal({ open: true, rows: 3, cols: 3 });
   };
 
   const confirmInsertTable = () => {
+      // 2. RESTORE SELECTION
       if (savedRangeRef.current) {
           const selection = window.getSelection();
-          if (selection) { selection.removeAllRanges(); selection.addRange(savedRangeRef.current); }
-      } else { editorRef.current?.focus(); }
+          if (selection) {
+              selection.removeAllRanges();
+              selection.addRange(savedRangeRef.current);
+          }
+      } else {
+          // Fallback: Just focus editor if no range saved
+          editorRef.current?.focus();
+      }
+
       const { rows, cols } = tableModal;
+      // Explicit styles to ensure visibility and fixed layout
       let html = '<table style="width: 100%; border-collapse: collapse; border: 1px solid #d1d5db; margin: 10px 0; table-layout: fixed;"><tbody>';
       for (let r = 0; r < rows; r++) {
           html += '<tr>';
-          for (let c = 0; c < cols; c++) html += '<td style="border: 1px solid #d1d5db; padding: 8px; min-width: 50px; vertical-align: top; word-break: break-word;">&nbsp;</td>';
+          for (let c = 0; c < cols; c++) {
+              // Add &nbsp; to make cell clickable/visible
+              html += '<td style="border: 1px solid #d1d5db; padding: 8px; min-width: 50px; vertical-align: top; word-break: break-word;">&nbsp;</td>';
+          }
           html += '</tr>';
       }
       html += '</tbody></table><p><br/></p>';
+      
       execCmd('insertHTML', html);
       setTableModal({ ...tableModal, open: false });
-      savedRangeRef.current = null;
+      savedRangeRef.current = null; // Clean up
   };
 
   const manipulateTable = (action: 'addRowAbove'|'addRowBelow'|'addColLeft'|'addColRight'|'delRow'|'delCol'|'delTable') => {
       if (!activeTableCtx) return;
       const { table, rowIndex, colIndex } = activeTableCtx;
-      if (action === 'delTable') { table.remove(); setActiveTableCtx(null); handleEditorInput(); return; }
-      // ... table logic omitted for brevity, same as previous
+
+      if (action === 'delTable') {
+          table.remove();
+          setActiveTableCtx(null);
+          handleEditorInput();
+          return;
+      }
+
+      if (action === 'delRow') {
+          if (table.rows.length > 0) table.deleteRow(rowIndex);
+          if (table.rows.length === 0) table.remove();
+      }
+      else if (action === 'delCol') {
+          for (let i = 0; i < table.rows.length; i++) {
+              if (table.rows[i].cells.length > colIndex) {
+                  table.rows[i].deleteCell(colIndex);
+              }
+          }
+          // If table empty (no cols), delete it
+          if (table.rows.length > 0 && table.rows[0].cells.length === 0) table.remove();
+      }
+      else if (action === 'addRowAbove' || action === 'addRowBelow') {
+          const insertIdx = action === 'addRowAbove' ? rowIndex : rowIndex + 1;
+          const newRow = table.insertRow(insertIdx);
+          const cellCount = table.rows[rowIndex === 0 ? 1 : 0].cells.length; // use existing row as ref
+          for (let c = 0; c < cellCount; c++) {
+              const newCell = newRow.insertCell(c);
+              newCell.style.border = '1px solid #d1d5db';
+              newCell.style.padding = '8px';
+              newCell.style.verticalAlign = 'top';
+              newCell.style.wordBreak = 'break-word';
+              newCell.innerHTML = '&nbsp;';
+          }
+      }
+      else if (action === 'addColLeft' || action === 'addColRight') {
+          const insertIdx = action === 'addColLeft' ? colIndex : colIndex + 1;
+          for (let i = 0; i < table.rows.length; i++) {
+              const newCell = table.rows[i].insertCell(insertIdx);
+              newCell.style.border = '1px solid #d1d5db';
+              newCell.style.padding = '8px';
+              newCell.style.verticalAlign = 'top';
+              newCell.style.wordBreak = 'break-word';
+              newCell.innerHTML = '&nbsp;';
+          }
+      }
+
       handleEditorInput();
   };
 
   const insertImage = (file: File) => {
       const reader = new FileReader();
-      reader.onload = (e) => { if (e.target?.result) execCmd('insertImage', e.target.result as string); };
+      reader.onload = (e) => {
+          if (e.target?.result) {
+              execCmd('insertImage', e.target.result as string);
+          }
+      };
       reader.readAsDataURL(file);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files?.[0]) { insertImage(e.target.files[0]); e.target.value = ''; }
+      if (e.target.files?.[0]) {
+          insertImage(e.target.files[0]);
+          e.target.value = ''; // Reset
+      }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
       if (e.clipboardData.files.length > 0) {
           const file = e.clipboardData.files[0];
-          if (file.type.startsWith('image/')) { e.preventDefault(); insertImage(file); }
+          if (file.type.startsWith('image/')) {
+              e.preventDefault();
+              insertImage(file);
+          }
       }
   };
 
   // Actions
   const handleScanInbox = async (isManual: boolean = true) => {
-    if (!VaultService.isConnected()) { 
-        if (isManual) alert("Verwende den 'Import' Button auf mobilen Geräten."); 
+    // Desktop Vault Check
+    if (!VaultService.isConnected()) {
+        if (isManual) alert("Verwende den 'Import' Button auf mobilen Geräten.");
         return; 
     }
-    
+
+    // CHECK FOR API KEY (via LocalStorage now)
     const apiKey = localStorage.getItem('tatdma_api_key');
-    if (!apiKey && isManual) { alert("ACHTUNG: Kein API Key gefunden."); }
-    
+    if (!apiKey) {
+        alert("ACHTUNG: Kein API Key gefunden. Die AI-Funktion ist deaktiviert. Bitte in den Systemeinstellungen hinterlegen.");
+    }
+
     const hasPermission = await VaultService.verifyPermission();
     if (!hasPermission && isManual) await VaultService.requestPermission();
     
     setIsScanning(true);
-    
-    if (isManual) setScanMessage({ text: "Synchronisiere Inbox...", type: 'info' });
-    
+    if (!isManual) setScanMessage({ text: "Synchronisiere Inbox...", type: 'info' });
+
+    // Use timeout to allow UI update before heavy processing
     setTimeout(async () => {
         try {
             const result = await DocumentService.scanInbox(data.notes || {}, data.categoryRules || {});
             setLastScanTime(new Date().toLocaleTimeString());
+
             if (result.movedCount > 0) {
                 const newNotes = { ...(data.notes || {}) };
-                result.newDocs.forEach(doc => { newNotes[doc.id] = doc; });
+                result.newDocs.forEach(doc => { 
+                    newNotes[doc.id] = doc; 
+                });
                 
-                // Tax Expenses
-                let newTaxExpenses = [...data.tax.expenses];
+                // Handle Tax Entries
+                let taxMsg = "";
+                let newExpenses = [...data.tax.expenses];
                 if (result.newTaxExpenses.length > 0) {
                     result.newTaxExpenses.forEach(exp => {
                         if (exp.currency === 'USD') exp.rate = data.tax.rateUSD || 0.85;
                         if (exp.currency === 'EUR') exp.rate = data.tax.rateEUR || 0.94;
                     });
-                    newTaxExpenses = [...newTaxExpenses, ...result.newTaxExpenses];
+                    newExpenses = [...newExpenses, ...result.newTaxExpenses];
+                    taxMsg = `, ${result.newTaxExpenses.length} Steuerbelege erfasst!`;
                 }
 
-                // Daily Expenses Logic (Fix for missing updates)
-                let updatedDailyExpenses = { ...(data.dailyExpenses || {}) };
-                if (result.newDailyExpenses && result.newDailyExpenses.length > 0) {
-                     result.newDailyExpenses.forEach(exp => {
-                         const y = exp.date.split('-')[0];
-                         if (!updatedDailyExpenses[y]) updatedDailyExpenses[y] = [];
-                         updatedDailyExpenses[y] = [...updatedDailyExpenses[y], exp];
-                     });
-                }
-
-                onUpdate({ 
-                    ...data, 
-                    notes: newNotes, 
-                    tax: { ...data.tax, expenses: newTaxExpenses },
-                    dailyExpenses: updatedDailyExpenses 
-                });
-
-                const msg = `${result.movedCount} Dateien importiert`;
+                onUpdate({ ...data, notes: newNotes, tax: { ...data.tax, expenses: newExpenses } });
+                
+                const msg = `${result.movedCount} Dateien importiert${taxMsg}`;
                 setScanMessage({ text: msg, type: 'success' });
                 if (isManual) alert(msg);
                 setSelectedCat('Inbox'); 
                 setTimeout(() => setScanMessage(null), 5000);
             } else {
-                if (isManual) { alert("Keine neuen Dateien."); setScanMessage(null); } 
-                else { 
+                if (isManual) {
+                    alert("Keine neuen Dateien im _INBOX Ordner gefunden.");
                     setScanMessage(null);
+                } else {
+                    setScanMessage({ text: "Auto-Sync: Keine neuen Dateien", type: 'info' });
+                    setTimeout(() => setScanMessage(null), 2000); 
                 }
             }
-        } catch (e: any) { if (isManual) alert("Fehler beim Scannen: " + e.message); } finally { setIsScanning(false); }
+        } catch (e: any) {
+            if (isManual) alert("Fehler beim Scannen: " + e.message);
+        } finally {
+            setIsScanning(false);
+        }
     }, 50);
   };
 
   const handleMobileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.files || e.target.files.length === 0) return;
+      
       setIsScanning(true);
       setScanMessage({ text: "Importiere Dateien...", type: 'info' });
+
+      // Timeout for UI update
       setTimeout(async () => {
           try {
               const newDocs = await DocumentService.processManualUpload(e.target.files!, data.categoryRules || {});
+              
               if (newDocs.length > 0) {
                   const newNotes = { ...(data.notes || {}) };
-                  for (const doc of newDocs) { newNotes[doc.id] = doc; }
+                  for (const doc of newDocs) {
+                      newNotes[doc.id] = doc;
+                  }
+
                   onUpdate({ ...data, notes: newNotes });
-                  setScanMessage({ text: `${newDocs.length} Dateien erfolgreich importiert!`, type: 'success' });
+                  const msg = `${newDocs.length} Dateien erfolgreich importiert!`;
+                  setScanMessage({ text: msg, type: 'success' });
                   setSelectedCat('Inbox');
               }
-          } catch (err: any) { alert("Fehler beim Import: " + err.message); } finally { setIsScanning(false); setTimeout(() => setScanMessage(null), 3000); }
-      }, 50);
-      e.target.value = ''; 
-  };
-
-  // --- NEW: MOBILE SMART SCAN DIRECT IMPORT ---
-  const handleMobileSmartScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (!e.target.files || e.target.files.length === 0) return;
-      
-      const apiKey = localStorage.getItem('tatdma_api_key');
-      if (!apiKey) {
-          alert("ACHTUNG: Kein API Key gefunden. Bitte in den Systemeinstellungen hinterlegen.");
-          e.target.value = '';
-          return;
-      }
-
-      setIsScanning(true);
-      setScanMessage({ text: "Analysiere mit AI...", type: 'info' });
-
-      // We process only the first file if multiple selected (Camera usually 1)
-      const file = e.target.files[0];
-
-      setTimeout(async () => {
-          try {
-              // 1. ANALYZE DIRECTLY
-              const aiResult = await GeminiService.analyzeDocument(file);
-              
-              if (!aiResult) throw new Error("AI konnte keine Daten extrahieren.");
-
-              // 2. PREPARE DATA STRUCTURES
-              const finalCategory = aiResult.category || 'Sonstiges';
-              const finalSubCategory = aiResult.subCategory; 
-              const finalYear = aiResult.date ? aiResult.date.split('-')[0] : new Date().getFullYear().toString();
-              const id = `doc_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
-              
-              // Determine Type
-              let docType: NoteDocument['type'] = 'image';
-              if (file.type.includes('pdf')) docType = 'pdf';
-
-              // Rich HTML Content
-              let contentHtml = aiResult.summary || "Automatisch analysiert durch AI.";
-              if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
-                  const d = aiResult.dailyExpenseData;
-                  contentHtml += `
-                  <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
-                      <strong style="font-size:11px; text-transform:uppercase; color:#666;">Beleg Details:</strong><br/>
-                      <table style="width:100%; font-size:13px; margin-top:5px;">
-                          <tr><td style="color:#888;">Händler:</td><td><strong>${d.merchant}</strong></td></tr>
-                          <tr><td style="color:#888;">Betrag:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
-                          <tr><td style="color:#888;">Kategorie:</td><td>${d.expenseCategory}</td></tr>
-                          ${d.items && d.items.length > 0 ? `<tr><td style="color:#888; vertical-align:top;">Items:</td><td style="font-size:11px;">${d.items.join(', ')}</td></tr>` : ''}
-                      </table>
-                  </div>`;
-              }
-
-              // Save to DB (Local only since mobile)
-              await DBService.saveFile(id, file);
-              const receiptId = `receipt_scan_${Date.now()}`; // separate ID for expense linkage
-              await DBService.saveFile(receiptId, file);
-
-              // 3. CREATE EXPENSE OBJECTS
-              const newDailyExpenses: ExpenseEntry[] = [];
-              const newTaxExpenses: TaxExpense[] = [];
-              let generatedExpenseId = undefined;
-
-              if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
-                  const expense = aiResult.dailyExpenseData;
-                  generatedExpenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
-                  newDailyExpenses.push({
-                      id: generatedExpenseId,
-                      date: aiResult.date || new Date().toISOString().split('T')[0],
-                      merchant: expense.merchant || 'Unbekannt',
-                      description: aiResult.title,
-                      amount: expense.amount || 0,
-                      currency: expense.currency || 'CHF',
-                      rate: 1, 
-                      category: (expense.expenseCategory as any) || 'Sonstiges',
-                      location: expense.location,
-                      receiptId: receiptId,
-                      isTaxRelevant: aiResult.isTaxRelevant,
-                      items: expense.items
-                  });
-              }
-
-              if (aiResult.isTaxRelevant && aiResult.taxData) {
-                  newTaxExpenses.push({
-                      desc: aiResult.title || file.name,
-                      amount: aiResult.taxData.amount || 0,
-                      currency: aiResult.taxData.currency || 'CHF',
-                      cat: (aiResult.taxData.taxCategory as any) || 'Sonstiges',
-                      year: finalYear,
-                      rate: 1, 
-                      receipts: [receiptId],
-                      taxRelevant: true
-                  });
-              }
-
-              // 4. CREATE NOTE DOCUMENT
-              const finalDoc: NoteDocument = {
-                  id,
-                  title: aiResult.title || file.name,
-                  type: docType,
-                  category: finalCategory,
-                  subCategory: finalSubCategory,
-                  year: finalYear,
-                  created: new Date().toISOString(),
-                  content: contentHtml,
-                  fileName: file.name,
-                  tags: ['Mobile-Scan', 'AI'],
-                  isNew: true,
-                  taxRelevant: aiResult.isTaxRelevant,
-                  isExpense: !!generatedExpenseId,
-                  expenseId: generatedExpenseId
-              };
-
-              // 5. UPDATE STATE
-              const newNotes = { ...(data.notes || {}) };
-              newNotes[id] = finalDoc;
-
-              let updatedTaxExpenses = [...data.tax.expenses, ...newTaxExpenses];
-              let updatedDailyExpenses = { ...(data.dailyExpenses || {}) };
-              
-              if (newDailyExpenses.length > 0) {
-                   const y = newDailyExpenses[0].date.split('-')[0];
-                   if (!updatedDailyExpenses[y]) updatedDailyExpenses[y] = [];
-                   updatedDailyExpenses[y] = [...updatedDailyExpenses[y], ...newDailyExpenses];
-              }
-
-              onUpdate({ 
-                  ...data, 
-                  notes: newNotes, 
-                  tax: { ...data.tax, expenses: updatedTaxExpenses },
-                  dailyExpenses: updatedDailyExpenses 
-              });
-
-              setScanMessage({ text: "Scan erfolgreich!", type: 'success' });
-              setSelectedCat('Inbox');
-
           } catch (err: any) {
-              alert("Fehler beim Smart Scan: " + err.message);
-              setScanMessage({ text: "Fehler", type: 'warning' });
+              console.error(err);
+              alert("Fehler beim Import: " + err.message);
           } finally {
               setIsScanning(false);
               setTimeout(() => setScanMessage(null), 3000);
           }
       }, 50);
-      e.target.value = '';
+      e.target.value = ''; // Reset input immediately
   };
 
+  // NEW: HANDLE ZIP ARCHIVE IMPORT
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
+      
       setIsScanning(true);
       setScanMessage({ text: "Entpacke Archiv...", type: 'info' });
+
       setTimeout(async () => {
           try {
               const newDocs = await DocumentService.processArchiveZip(file, data.categoryRules || {});
+              
               if (newDocs.length > 0) {
                   const newNotes = { ...(data.notes || {}) };
-                  for (const doc of newDocs) { newNotes[doc.id] = doc; }
+                  for (const doc of newDocs) {
+                      newNotes[doc.id] = doc;
+                  }
                   onUpdate({ ...data, notes: newNotes });
-                  setScanMessage({ text: `${newDocs.length} Dateien aus ZIP wiederhergestellt!`, type: 'success' });
+                  const msg = `${newDocs.length} Dateien aus ZIP wiederhergestellt!`;
+                  setScanMessage({ text: msg, type: 'success' });
                   setSelectedCat('All');
-              } else { alert("Keine gültigen Dateien im ZIP gefunden."); setScanMessage(null); }
-          } catch (err: any) { alert("Fehler beim ZIP Import: " + err.message); setScanMessage(null); } finally { setIsScanning(false); setTimeout(() => setScanMessage(null), 4000); }
+              } else {
+                  alert("Keine gültigen Dateien im ZIP gefunden.");
+                  setScanMessage(null);
+              }
+          } catch (err: any) {
+              console.error(err);
+              alert("Fehler beim ZIP Import: " + err.message);
+              setScanMessage(null);
+          } finally {
+              setIsScanning(false);
+              setTimeout(() => setScanMessage(null), 4000);
+          }
       }, 50);
       e.target.value = '';
   };
 
   const handleReindex = async () => {
-     if (!confirm("Vollständiger Re-Index?\n\nDas liest alle Dateien im _ARCHIVE Ordner neu ein.")) return;
+     if (!confirm("Vollständiger Re-Index?\n\nDas liest alle Dateien im _ARCHIVE Ordner neu ein. Dies ändert NICHTS an der Kategorie-Sortierung, sondern stellt nur die Datenbank wieder her.")) return;
      if (!VaultService.isConnected()) return;
+     
      setIsReindexing(true);
      try {
          const recoveredDocs = await DocumentService.rebuildIndexFromVault();
          const currentMap: Record<string, NoteDocument> = { ...(data.notes || {}) };
          let addedCount = 0;
+         let updatedCount = 0;
+
          recoveredDocs.forEach(doc => {
-             if (!Object.values(currentMap).some(d => d.filePath === doc.filePath)) { currentMap[doc.id] = doc; addedCount++; }
+             const existingEntry = Object.entries(currentMap).find(([_, val]) => val.filePath === doc.filePath);
+             if (existingEntry) {
+                 const [oldId, oldDoc] = existingEntry;
+                 if (doc.content && doc.content.length > (oldDoc.content?.length || 0)) {
+                    currentMap[oldId] = { ...oldDoc, content: doc.content, category: doc.category, subCategory: doc.subCategory, year: doc.year };
+                    updatedCount++;
+                 }
+             } else {
+                 currentMap[doc.id] = doc;
+                 addedCount++;
+             }
          });
          onUpdate({ ...data, notes: currentMap });
-         alert(`Index aktualisiert!\n\n${addedCount} neu.`);
-     } catch (e: any) { alert("Fehler: " + e.message); } finally { setIsReindexing(false); }
+         alert(`Index aktualisiert!\n\n${addedCount} neu, ${updatedCount} aktualisiert.`);
+     } catch (e: any) {
+         alert("Fehler: " + e.message);
+     } finally {
+         setIsReindexing(false);
+     }
   };
 
+  // --- NEW: AI CONTENT ANALYSIS (NO TAX IMPORT) ---
   const handleReanalyzeContent = async () => {
       if (!selectedNoteId || !selectedNote) return;
+      
       setIsReanalyzing(true);
       try {
           const apiKey = localStorage.getItem('tatdma_api_key');
           if (!apiKey) throw new Error("Kein API Key gefunden.");
+
           let fileBlob = await DBService.getFile(selectedNote.id);
           if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
               fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath);
           }
+
           if (!fileBlob) throw new Error("Originaldatei für Analyse nicht gefunden.");
+
           const file = new File([fileBlob], selectedNote.fileName || 'doc', { type: fileBlob.type });
+          
+          // Use General Document Analysis
           const aiResult = await GeminiService.analyzeDocument(file);
+          
           if (aiResult) {
-              const newContent = selectedNote.content + 
-                  `<div style="margin-top:20px; border-top:2px solid #eee; padding-top:15px;">
-                      <h4>AI Analyse</h4><p>${aiResult.summary}</p>
-                   </div>`;
-              updateSelectedNote({ category: aiResult.category, subCategory: aiResult.subCategory, title: aiResult.title || selectedNote.title, content: newContent });
-              alert(`Analyse abgeschlossen!\n\nKategorie: ${aiResult.category}`);
-          } else { alert("AI konnte keine Daten extrahieren."); }
-      } catch (e: any) { alert("Fehler bei Analyse: " + e.message); } finally { setIsReanalyzing(false); }
+              const year = aiResult.date ? aiResult.date.split('-')[0] : selectedNote.year;
+              
+              // Prepare Payment Details Block
+              let paymentTable = '';
+              if (aiResult.paymentDetails && (aiResult.paymentDetails.recipientName || aiResult.paymentDetails.iban)) {
+                  paymentTable = `
+                  <div style="background-color:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px; margin-top:8px;">
+                      <strong style="color:#0284c7; font-size:11px; text-transform:uppercase; display:block; margin-bottom:6px;">💰 Zahlungsdetails</strong>
+                      <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                          ${aiResult.paymentDetails.recipientName ? `<tr><td style="color:#64748b; padding:2px 0;">Empfänger:</td><td style="font-weight:bold; color:#0f172a;">${aiResult.paymentDetails.recipientName}</td></tr>` : ''}
+                          ${aiResult.paymentDetails.payerName ? `<tr><td style="color:#64748b; padding:2px 0;">Zahlungspflichtig:</td><td style="font-weight:bold; color:#0f172a;">${aiResult.paymentDetails.payerName}</td></tr>` : ''}
+                          ${aiResult.paymentDetails.iban ? `<tr><td style="color:#64748b; padding:2px 0;">IBAN / Konto:</td><td style="font-family:monospace; color:#0f172a;">${aiResult.paymentDetails.iban}</td></tr>` : ''}
+                          ${aiResult.paymentDetails.reference ? `<tr><td style="color:#64748b; padding:2px 0;">Referenz:</td><td style="font-family:monospace; color:#0f172a;">${aiResult.paymentDetails.reference}</td></tr>` : ''}
+                          ${aiResult.paymentDetails.dueDate ? `<tr><td style="color:#64748b; padding:2px 0;">Fällig am:</td><td style="font-weight:bold; color:#b91c1c;">${aiResult.paymentDetails.dueDate}</td></tr>` : ''}
+                      </table>
+                  </div>
+                  `;
+              }
+
+              // Prepare smart summary block
+              const aiBlock = `
+              <div style="margin-top:20px; border-top:2px solid #e5e7eb; padding-top:15px;">
+                  <h4 style="color:#4f46e5; font-weight:800; font-size:12px; text-transform:uppercase; display:flex; align-items:center; gap:5px;">
+                      🤖 AI Analyse & Zusammenfassung
+                  </h4>
+                  <div style="background-color:#f9fafb; padding:12px; border-radius:8px; border:1px solid #f3f4f6; margin-top:8px;">
+                      <p style="font-weight:bold; margin-bottom:4px; font-size:13px;">${aiResult.title}</p>
+                      <p style="color:#4b5563; font-size:12px; line-height:1.5;">${aiResult.summary}</p>
+                      ${paymentTable}
+                      <div style="margin-top:8px; font-size:10px; color:#9ca3af; font-style:italic;">
+                          Grund für Kategorie: ${aiResult.aiReasoning}
+                      </div>
+                  </div>
+              </div>
+              <p><br/></p>
+              `;
+
+              const newContent = selectedNote.content + aiBlock;
+
+              updateSelectedNote({
+                  category: aiResult.category,
+                  subCategory: aiResult.subCategory,
+                  title: aiResult.title || selectedNote.title,
+                  year: year,
+                  content: newContent
+              });
+              
+              alert(`Analyse abgeschlossen!\n\nKategorie: ${aiResult.category}\nSub: ${aiResult.subCategory || '-'}`);
+          } else {
+              alert("AI konnte keine Daten extrahieren.");
+          }
+
+      } catch (e: any) {
+          alert("Fehler bei Analyse: " + e.message);
+      } finally {
+          setIsReanalyzing(false);
+      }
   };
 
   const toggleTaxImport = async () => {
      if (!selectedNoteId || !selectedNote) return;
+     
+     // REMOVE from Tax
      if (selectedNote.taxRelevant) {
          const newExpenses = data.tax.expenses.filter(e => e.noteRef !== selectedNote.id);
          updateSelectedNote({ taxRelevant: false });
-         onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: false } }, tax: { ...data.tax, expenses: newExpenses } });
+         onUpdate({
+             ...data,
+             notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: false } },
+             tax: { ...data.tax, expenses: newExpenses }
+         });
          return;
      }
+
+     // ADD to Tax (Scan first)
      setIsAnalyzingTax(true);
      try {
+         // CHECK API KEY VIA LOCALSTORAGE
          const apiKey = localStorage.getItem('tatdma_api_key');
-         if (!apiKey) throw new Error("Kein API Key für AI Scan gefunden.");
+         if (!apiKey) {
+             throw new Error("Kein API Key für AI Scan gefunden.");
+         }
+
          let fileBlob = await DBService.getFile(selectedNote.id);
-         if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) { fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath); }
-         if (!fileBlob) throw new Error("Originaldatei für Analyse nicht gefunden.");
+         if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
+             fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath);
+         }
+
+         if (!fileBlob) {
+             throw new Error("Originaldatei für Analyse nicht gefunden.");
+         }
+
+         let amount = 0;
+         let currency = 'CHF';
+         let category: any = 'Sonstiges';
+         let reasoning = '';
+         
          const file = new File([fileBlob], selectedNote.fileName || 'beleg.pdf', { type: fileBlob.type });
+         
+         // Use Gemini
          const aiResult = await GeminiService.analyzeDocument(file);
-         let amount = 0; let currency = 'CHF'; let category: any = 'Sonstiges';
-         if (aiResult && aiResult.taxData) { amount = aiResult.taxData.amount; currency = aiResult.taxData.currency; category = aiResult.taxData.taxCategory; }
+         
+         if (aiResult) {
+             // Update Note Content with AI Reasoning for Transparency
+             if (aiResult.aiReasoning) {
+                 const newContent = selectedNote.content + 
+                     `<br/><br/><div style="border-top:1px solid #eee; padding-top:10px; font-size:10px; color:#666;">
+                        <strong>🤖 AI Analysis:</strong> ${aiResult.aiReasoning}<br/>
+                        <em>Tax Rel: ${aiResult.isTaxRelevant ? 'Yes' : 'No'}</em>
+                      </div>`;
+                 updateSelectedNote({ content: newContent, category: aiResult.category, subCategory: aiResult.subCategory });
+                 reasoning = aiResult.aiReasoning;
+             }
+
+             if (aiResult.taxData) {
+                 amount = aiResult.taxData.amount;
+                 currency = aiResult.taxData.currency;
+                 category = aiResult.taxData.taxCategory;
+             }
+         }
+
+         if (amount === 0) {
+             // Fallback Regex
+             const amountMatch = stripHtml(selectedNote.content).match(/(\d+[.,]\d{2})/);
+             if (amountMatch) amount = parseFloat(amountMatch[1].replace(',', '.'));
+             if (selectedNote.category.includes('Beruf') || selectedNote.category.includes('Arbeit')) category = 'Berufsauslagen';
+             else if (selectedNote.category.includes('Versicherung')) category = 'Versicherung';
+             else category = 'Sonstiges';
+         }
+
          const newReceiptId = `receipt_from_note_${Date.now()}`;
          await DBService.saveFile(newReceiptId, fileBlob);
-         const newExpense: TaxExpense = { id: `exp_${Date.now()}`, noteRef: selectedNote.id, desc: selectedNote.title, amount: amount, year: selectedNote.year, cat: category, currency: currency, rate: 1, receipts: [newReceiptId], taxRelevant: true };
-         onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: true } }, tax: { ...data.tax, expenses: [...data.tax.expenses, newExpense] } });
-         alert(`Importiert: ${amount} ${currency}\nKat: ${category}`);
-     } catch (e: any) { alert("Fehler beim Import: " + e.message); } finally { setIsAnalyzingTax(false); }
-  };
 
-  // --- NEW: TOGGLE EXPENSE (Shopping Bag) ---
-  const toggleExpenseImport = async () => {
-      if (!selectedNoteId || !selectedNote) return;
+         const newExpense: TaxExpense = {
+             id: `exp_${Date.now()}`,
+             noteRef: selectedNote.id,
+             desc: selectedNote.title,
+             amount: amount,
+             year: selectedNote.year,
+             cat: category,
+             currency: currency,
+             rate: 1,
+             receipts: [newReceiptId],
+             taxRelevant: true
+         };
 
-      // REMOVE from Expenses
-      if (selectedNote.isExpense) {
-          const year = selectedNote.year || new Date().getFullYear().toString();
-          let currentYearExpenses = data.dailyExpenses?.[year] || [];
-          if (selectedNote.expenseId) {
-              currentYearExpenses = currentYearExpenses.filter(e => e.id !== selectedNote.expenseId);
-          } else {
-              currentYearExpenses = currentYearExpenses.filter(e => e.description !== selectedNote.title);
-          }
-          
-          updateSelectedNote({ isExpense: false, expenseId: undefined });
-          onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, isExpense: false, expenseId: undefined } }, dailyExpenses: { ...data.dailyExpenses, [year]: currentYearExpenses } });
-          return;
-      }
+         onUpdate({
+             ...data,
+             notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: true, content: selectedNote.content } }, // content updated above via updateSelectedNote might not be sync yet
+             tax: { ...data.tax, expenses: [...data.tax.expenses, newExpense] }
+         });
+         
+         alert(`Importiert: ${amount} ${currency}\nKat: ${category}\n\nAI Info: ${reasoning || 'n/a'}`);
 
-      // ADD to Expenses
-      let amount = 0;
-      let currency = 'CHF';
-      let merchant = 'Unbekannt';
-      
-      const html = selectedNote.content || '';
-      
-      const amountMatch = html.match(/Betrag:.*?<strong>([\d\.'’]+)\s*(\w*)<\/strong>/) || html.match(/(\d+[\.,]\d{2})\s?(CHF|EUR|USD)/);
-      const merchantMatch = html.match(/Händler:.*?<strong>(.*?)<\/strong>/);
-      
-      if (amountMatch) {
-          const rawAmount = amountMatch[1].replace(/['’]/g, '');
-          amount = parseFloat(rawAmount);
-          if (amountMatch[2]) currency = amountMatch[2];
-      }
-      if (merchantMatch) {
-          merchant = merchantMatch[1];
-      }
-
-      if (amount === 0 || isNaN(amount)) {
-          const manualAmount = prompt("Betrag nicht automatisch erkannt. Bitte eingeben (z.B. 25.50):");
-          if (!manualAmount) return;
-          amount = parseFloat(manualAmount);
-      }
-
-      const year = selectedNote.year || new Date().getFullYear().toString();
-      const expenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
-      
-      let receiptId = undefined;
-      let fileBlob = await DBService.getFile(selectedNote.id);
-      if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
-          fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath);
-      }
-      if (fileBlob) {
-          receiptId = `receipt_exp_${Date.now()}`;
-          await DBService.saveFile(receiptId, fileBlob);
-      }
-
-      const newEntry: ExpenseEntry = {
-          id: expenseId,
-          date: new Date().toISOString().split('T')[0], 
-          merchant: merchant,
-          description: selectedNote.title,
-          amount: amount,
-          currency: currency,
-          rate: 1,
-          category: 'Sonstiges', // Default
-          isTaxRelevant: false,
-          receiptId: receiptId
-      };
-
-      const currentYearExpenses = data.dailyExpenses?.[year] || [];
-      const updatedDailyExpenses = { ...data.dailyExpenses, [year]: [...currentYearExpenses, newEntry] };
-
-      const updatedNote = { ...selectedNote, isExpense: true, expenseId: expenseId };
-      const updatedNotes = { ...data.notes, [selectedNoteId]: updatedNote };
-
-      onUpdate({ 
-          ...data, 
-          notes: updatedNotes,
-          dailyExpenses: updatedDailyExpenses 
-      });
-      
-      alert(`Als Ausgabe erfasst: ${amount} ${currency} bei ${merchant}\n(Jahr: ${year})`);
+     } catch (e: any) {
+         alert("Fehler beim Import: " + e.message);
+     } finally {
+         setIsAnalyzingTax(false);
+     }
   };
 
   const createNote = () => {
     const id = `note_${Date.now()}`;
     const year = new Date().getFullYear().toString();
-    let initialCat = selectedCat === 'All' || selectedCat === 'Inbox' ? 'Sonstiges' : selectedCat;
-    const newNote: NoteDocument = { id, title: 'Neue Notiz', type: 'note', category: initialCat, year: year, created: new Date().toISOString(), content: '<p></p>', fileName: 'note.txt', tags: [], isNew: true };
+    // Default to 'Sonstiges' if viewing All or Inbox, otherwise use current selection
+    // We avoid creating manual notes in 'Inbox' usually, but user can move it later.
+    let initialCat = selectedCat;
+    if (initialCat === 'All' || initialCat === 'Inbox') {
+        initialCat = 'Sonstiges';
+    }
+
+    const newNote: NoteDocument = {
+        id,
+        title: 'Neue Notiz',
+        type: 'note',
+        category: initialCat,
+        year: year,
+        created: new Date().toISOString(),
+        content: '<p></p>',
+        fileName: 'note.txt',
+        tags: [],
+        isNew: true
+    };
+
     onUpdate({ ...data, notes: { ...data.notes, [id]: newNote } });
     setSelectedNoteId(id);
-    if (selectedCat !== 'All' && selectedCat !== initialCat) setSelectedCat(initialCat);
+    
+    // Switch category view if needed so the new note is visible
+    if (selectedCat !== 'All' && selectedCat !== initialCat) {
+        setSelectedCat(initialCat);
+    }
   };
 
   const changeCategory = async (newCat: DocCategory, newSubCat?: string) => {
       if (!selectedNoteId || !selectedNote) return;
+      // If nothing changed, do nothing
       if (selectedNote.category === newCat && selectedNote.subCategory === newSubCat) return;
-      setIsCreatingCat(false); setNewCatName('');
+
+      setIsCreatingCat(false);
+      setNewCatName('');
+
       if (selectedNote.filePath && VaultService.isConnected()) {
           const updatedDoc = await DocumentService.moveFile(selectedNote, newCat, newSubCat);
           onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedDoc } });
-      } else { updateSelectedNote({ category: newCat, subCategory: newSubCat }); }
+      } else {
+          updateSelectedNote({ category: newCat, subCategory: newSubCat });
+      }
   };
 
   const deleteNote = () => {
@@ -1126,11 +1108,19 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       if (!selectedNote) return;
       if (selectedNote.filePath && VaultService.isConnected()) {
           const blob = await DocumentService.getFileFromVault(selectedNote.filePath);
-          if (blob) { const url = URL.createObjectURL(blob); window.open(url, '_blank'); return; }
+          if (blob) {
+              const url = URL.createObjectURL(blob);
+              window.open(url, '_blank');
+              return;
+          }
       }
       try {
           const blob = await DBService.getFile(selectedNote.id);
-          if (blob) { const url = URL.createObjectURL(blob); window.open(url, '_blank'); return; }
+          if (blob) {
+             const url = URL.createObjectURL(blob);
+             window.open(url, '_blank');
+             return;
+          }
       } catch (e) { console.error(e); }
       alert("Datei nicht gefunden.");
   };
@@ -1164,14 +1154,74 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
+  const getTypeLabel = (type: NoteDocument['type']) => {
+      switch(type) {
+          case 'pdf': return 'PDF Doku';
+          case 'image': return 'Bild / Scan';
+          case 'word': return 'Word / Pages';
+          case 'excel': return 'Excel / CSV';
+          case 'note': return 'Notiz';
+          default: return 'Datei';
+      }
+  };
+
   const getCategoryColor = (cat: string) => {
       if (cat === 'Inbox') return 'bg-purple-50 text-purple-600 border border-purple-100';
       if (cat.includes('Steuern')) return 'bg-red-50 text-red-600 border border-red-100';
       if (cat.includes('Finanzen') || cat.includes('Bank')) return 'bg-blue-50 text-blue-600 border border-blue-100';
+      if (cat.includes('Wohnen')) return 'bg-emerald-50 text-emerald-600 border border-emerald-100';
+      if (cat.includes('Versicherung')) return 'bg-teal-50 text-teal-600 border border-teal-100';
+      if (cat.includes('Beruf') || cat.includes('Arbeit')) return 'bg-indigo-50 text-indigo-600 border border-indigo-100';
+      if (cat.includes('Identität') || cat.includes('Privat')) return 'bg-pink-50 text-pink-600 border border-pink-100';
+      if (cat.includes('Fahrzeug')) return 'bg-orange-50 text-orange-600 border border-orange-100';
       return 'bg-gray-50 text-gray-500 border border-gray-100';
   };
 
-  const toggleCatExpanded = (cat: string) => { setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] })); };
+  const toggleCatExpanded = (cat: string) => {
+    setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
+  };
+
+  const toggleExpenseImport = () => {
+      if (!selectedNoteId || !selectedNote) return;
+      
+      if (selectedNote.isExpense) {
+          updateSelectedNote({ isExpense: false });
+          return;
+      }
+
+      const expenseId = `expense_${Date.now()}`;
+      // Create expense entry
+      const year = selectedNote.year || new Date().getFullYear().toString();
+      const currentExpenses = data.dailyExpenses?.[year] || [];
+      
+      const newEntry: ExpenseEntry = {
+          id: expenseId,
+          date: selectedNote.created.split('T')[0],
+          merchant: 'Aus Notiz',
+          description: selectedNote.title,
+          amount: 0,
+          currency: 'CHF',
+          rate: 1,
+          category: 'Sonstiges',
+          receiptId: selectedNote.id,
+          isTaxRelevant: selectedNote.taxRelevant || false
+      };
+
+      const newData = { 
+          ...data, 
+          dailyExpenses: {
+              ...data.dailyExpenses,
+              [year]: [...currentExpenses, newEntry]
+          },
+          notes: {
+              ...data.notes,
+              [selectedNoteId]: { ...selectedNote, isExpense: true, expenseId: expenseId }
+          }
+      };
+      
+      onUpdate(newData);
+      alert("Zu Ausgaben hinzugefügt. Bitte im 'Ausgaben'-Tab vervollständigen.");
+  };
 
   return (
     <div 
@@ -1187,64 +1237,137 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          
          {/* Mobile Toolbar Header */}
          <div className="md:hidden p-3 border-b border-gray-100 flex gap-2 items-center w-full overflow-x-hidden">
-                <select value={selectedCat} onChange={(e) => { setSelectedCat(e.target.value); setSelectedSubCat(null); }} className="flex-1 bg-white border border-gray-200 rounded-lg px-2 py-2 text-sm font-bold shadow-sm min-w-0">
-                <option value="All">Alle Kategorien</option>
-                {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                {/* Subtle scanning indicator for mobile */}
-                {isScanning && <div className="p-2"><Loader2 size={16} className="animate-spin text-blue-500" /></div>}
-                
-                {/* SMART SCAN MOBILE BUTTON */}
-                <button onClick={() => smartScanInputRef.current?.click()} className="p-2 bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><Sparkles size={20} /></button>
-                <input type="file" ref={smartScanInputRef} capture="environment" accept="image/*" className="hidden" onChange={handleMobileSmartScan} />
+            {isScanning ? (
+                <div className="flex-1 flex items-center justify-center gap-2 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-bold animate-pulse">
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Importiere...</span>
+                </div>
+            ) : (
+                <>
+                    <select 
+                    value={selectedCat} 
+                    onChange={(e) => { setSelectedCat(e.target.value); setSelectedSubCat(null); }} 
+                    className="flex-1 bg-white border border-gray-200 rounded-lg px-2 py-2 text-sm font-bold shadow-sm min-w-0"
+                    >
+                    <option value="All">Alle Kategorien</option>
+                    {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    
+                    {/* ZIP Import Mobile */}
+                    <button 
+                        onClick={() => zipImportInputRef.current?.click()} 
+                        className="p-2 bg-purple-100 text-purple-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
+                        title="ZIP Archiv importieren"
+                    >
+                        <FileArchive size={20} />
+                    </button>
+                    <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
 
-                <button onClick={() => zipImportInputRef.current?.click()} className="p-2 bg-purple-100 text-purple-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><FileArchive size={20} /></button>
-                <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
-                <button onClick={() => mobileImportInputRef.current?.click()} className="p-2 bg-[#16325c] text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><UploadCloud size={20} /></button>
-                <input type="file" ref={mobileImportInputRef} multiple className="hidden" onChange={handleMobileImport} />
-                <button onClick={createNote} className="p-2 bg-blue-100 text-blue-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"><PenTool size={20} /></button>
+                    <button 
+                        onClick={() => mobileImportInputRef.current?.click()} 
+                        className="p-2 bg-[#16325c] text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
+                        title="Dateien importieren"
+                    >
+                        <UploadCloud size={20} />
+                    </button>
+                    <input type="file" ref={mobileImportInputRef} multiple className="hidden" onChange={handleMobileImport} />
+
+                    <button 
+                        onClick={createNote} 
+                        className="p-2 bg-blue-100 text-blue-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
+                    >
+                        <PenTool size={20} />
+                    </button>
+                </>
+            )}
          </div>
 
          {/* Desktop Create Button */}
          <div className="hidden md:block p-4 space-y-2">
-            <button onClick={createNote} className="w-full py-3 bg-[#16325c] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/10 hover:bg-blue-800 transition-all"><PenTool size={16} /> Neue Notiz</button>
+            <button 
+                onClick={createNote}
+                className="w-full py-3 bg-[#16325c] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/10 hover:bg-blue-800 transition-all"
+            >
+                <PenTool size={16} /> Neue Notiz
+            </button>
          </div>
          
          {/* Categories List (Desktop) */}
          <div className="hidden md:block flex-1 overflow-y-auto px-2 space-y-1">
-            <button onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }} className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-bold transition-colors ${selectedCat === 'All' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
-                <div className="flex items-center gap-2"><Inbox size={16}/> Alle Notizen</div><span className="bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded text-[10px]">{notesList.length}</span>
+            <button 
+                onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-bold transition-colors ${selectedCat === 'All' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+            >
+                <div className="flex items-center gap-2"><Inbox size={16}/> Alle Notizen</div>
+                <span className="bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded text-[10px]">{notesList.length}</span>
             </button>
+            
             <div className="pt-4 pb-2 px-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategorien</div>
+            
+            {/* Special Inbox Button */}
             <div className="group flex items-center gap-1 w-full px-1">
-                <button onClick={() => { setSelectedCat('Inbox'); setSelectedSubCat(null); }} className={`flex-1 flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === 'Inbox' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
-                    <div className="flex items-center gap-2"><Inbox size={16} className="text-purple-500"/> Inbox</div><span className="text-[10px] text-gray-300">{notesList.filter(n => n.category === 'Inbox').length}</span>
+                <button 
+                    onClick={() => { setSelectedCat('Inbox'); setSelectedSubCat(null); }}
+                    className={`flex-1 flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === 'Inbox' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+                >
+                    <div className="flex items-center gap-2">
+                        <Inbox size={16} className="text-purple-500"/>
+                        Inbox
+                    </div>
+                    <span className="text-[10px] text-gray-300">{notesList.filter(n => n.category === 'Inbox').length}</span>
                 </button>
+                <button onClick={(e) => { e.stopPropagation(); setRuleModalCat('Inbox'); }} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Tag size={12} /></button>
             </div>
+
+            {/* Dynamic Categories with Sub-Categories (Accordion) */}
             {CATEGORY_KEYS.filter(c => c !== 'Inbox').map(catName => {
                 const subCats = CATEGORY_STRUCTURE[catName];
                 const isExpanded = expandedCats[catName];
                 const docCount = notesList.filter(n => n.category === catName).length;
+
                 return (
                 <div key={catName} className="w-full px-1">
                     <div className="group relative flex items-center gap-1">
                          {subCats.length > 0 && (
-                            <button onClick={(e) => { e.stopPropagation(); toggleCatExpanded(catName); }} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg transition-colors absolute left-1 z-10">
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); toggleCatExpanded(catName); }}
+                                className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg transition-colors absolute left-1 z-10"
+                            >
                                 {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             </button>
                          )}
-                        <button onClick={() => { setSelectedCat(catName); setSelectedSubCat(null); if (!isExpanded) toggleCatExpanded(catName); }} className={`flex-1 flex items-center justify-between pl-8 pr-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === catName ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
-                            <div className="flex items-center gap-2 truncate"><FolderOpen size={16} className="text-amber-500 shrink-0"/><span className="truncate">{catName}</span></div><span className="text-[10px] text-gray-300 shrink-0">{docCount}</span>
+
+                        <button 
+                            onClick={() => { 
+                                setSelectedCat(catName); 
+                                setSelectedSubCat(null);
+                                if (!isExpanded) toggleCatExpanded(catName);
+                            }}
+                            className={`flex-1 flex items-center justify-between pl-8 pr-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === catName ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
+                        >
+                            <div className="flex items-center gap-2 truncate">
+                                <FolderOpen size={16} className="text-amber-500 shrink-0"/>
+                                <span className="truncate">{catName}</span>
+                            </div>
+                            <span className="text-[10px] text-gray-300 shrink-0">{docCount}</span>
                         </button>
+                        
                         <button onClick={(e) => { e.stopPropagation(); setRuleModalCat(catName); }} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Tag size={12} /></button>
                     </div>
+
+                    {/* Sub Categories */}
                     {isExpanded && subCats.length > 0 && (
                         <div className="pl-9 pr-2 space-y-0.5 mt-0.5 mb-1 animate-in slide-in-from-top-1 fade-in duration-200">
                             {subCats.map(sub => {
                                 const subCount = notesList.filter(n => n.category === catName && n.subCategory === sub).length;
                                 return (
-                                    <button key={sub} onClick={() => { setSelectedCat(catName); setSelectedSubCat(sub); }} className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition-colors ${selectedCat === catName && selectedSubCat === sub ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}>
-                                        <span className="truncate">{sub}</span>{subCount > 0 && <span className="text-[9px] opacity-60">{subCount}</span>}
+                                    <button 
+                                        key={sub}
+                                        onClick={() => { setSelectedCat(catName); setSelectedSubCat(sub); }}
+                                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition-colors ${selectedCat === catName && selectedSubCat === sub ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
+                                    >
+                                        <span className="truncate">{sub}</span>
+                                        {subCount > 0 && <span className="text-[9px] opacity-60">{subCount}</span>}
                                     </button>
                                 );
                             })}
@@ -1257,30 +1380,64 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
          {/* Desktop Vault/Scan Footer */}
          <div className="hidden md:block p-4 border-t border-gray-100 bg-gray-50 space-y-2 relative">
-            {scanMessage && <div className={`absolute bottom-full left-4 right-4 mb-2 p-3 text-xs font-bold rounded-xl shadow-lg flex items-center gap-2 z-20 ${scanMessage.type === 'warning' ? 'bg-orange-100 text-orange-700' : scanMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-600 text-white'}`}>{scanMessage.text}</div>}
-             <button onClick={() => zipImportInputRef.current?.click()} disabled={isScanning} className="w-full py-2.5 border border-purple-200 bg-purple-50 text-purple-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-purple-100 transition-all"><FileArchive size={14} /> ZIP Archiv Import</button>
-            <button onClick={() => handleScanInbox(true)} disabled={isScanning} className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}>
-                {isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />} 
-                Inbox Scannen
+            {scanMessage && (
+                <div className={`absolute bottom-full left-4 right-4 mb-2 p-3 text-xs font-bold rounded-xl shadow-lg flex items-center gap-2 z-20 ${scanMessage.type === 'warning' ? 'bg-orange-100 text-orange-700' : scanMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-600 text-white'}`}>
+                    {scanMessage.text}
+                </div>
+            )}
+            
+            {/* Desktop ZIP Import Button */}
+             <button onClick={() => zipImportInputRef.current?.click()} disabled={isScanning} className="w-full py-2.5 border border-purple-200 bg-purple-50 text-purple-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-purple-100 transition-all">
+                <FileArchive size={14} /> ZIP Archiv Import
             </button>
-            <button onClick={handleReindex} disabled={isReindexing} className={`w-full py-2.5 border border-blue-200 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-100 transition-all ${isReindexing ? 'opacity-50 cursor-wait' : ''}`}>{isReindexing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Archive Sync</button>
+            <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
+
+            <button onClick={() => handleScanInbox(true)} disabled={isScanning} className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}>
+                {isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />} Inbox Scannen
+            </button>
+            
+            <button 
+                onClick={handleReindex} 
+                disabled={isReindexing} 
+                className={`w-full py-2.5 border border-blue-200 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-100 transition-all ${isReindexing ? 'opacity-50 cursor-wait' : ''}`}
+                title="Liest bestehende Ordnerstruktur neu ein (kein AI-Scan)"
+            >
+                {isReindexing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Archive Sync
+            </button>
          </div>
       </div>
 
       {/* Resizer Sidebar -> List */}
-      <div className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10" onMouseDown={startResizing('sidebar')} />
+      <div 
+        className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10"
+        onMouseDown={startResizing('sidebar')}
+      />
 
       {/* 2. NOTE LIST */}
-      <div className={`border-r border-gray-100 flex flex-col min-h-0 bg-white shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`} style={{ width: window.innerWidth >= 768 ? layout.listW : '100%' }}>
+      <div 
+        className={`border-r border-gray-100 flex flex-col min-h-0 bg-white shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`}
+        style={{ width: window.innerWidth >= 768 ? layout.listW : '100%' }}
+      >
          <div className="p-4 border-b border-gray-50 shrink-0 space-y-2">
             <div className="relative">
                 <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                 <input type="text" placeholder="Suchen..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-50 transition-all"/>
             </div>
+            {/* Active Filter Chips */}
             {(selectedCat !== 'All' || selectedSubCat) && (
                 <div className="flex gap-2 flex-wrap">
-                    {selectedCat !== 'All' && <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-[10px] font-bold"><span>{selectedCat}</span><button onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }} className="hover:text-red-500"><X size={10}/></button></div>}
-                    {selectedSubCat && <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-md text-[10px] font-bold"><span>{selectedSubCat}</span><button onClick={() => setSelectedSubCat(null)} className="hover:text-red-500"><X size={10}/></button></div>}
+                    {selectedCat !== 'All' && (
+                        <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-[10px] font-bold">
+                            <span>{selectedCat}</span>
+                            <button onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }} className="hover:text-red-500"><X size={10}/></button>
+                        </div>
+                    )}
+                    {selectedSubCat && (
+                        <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-md text-[10px] font-bold">
+                            <span>{selectedSubCat}</span>
+                            <button onClick={() => setSelectedSubCat(null)} className="hover:text-red-500"><X size={10}/></button>
+                        </div>
+                    )}
                 </div>
             )}
          </div>
@@ -1290,16 +1447,27 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     <div className="flex items-start justify-between mb-1">
                         <h4 className={`font-bold text-sm truncate flex-1 ${selectedNoteId === note.id ? 'text-blue-700' : 'text-gray-800'}`}>{note.title}</h4>
                         <div className="flex items-center gap-1">
-                            {note.isExpense && <span title="Ausgabe erfasst"><ShoppingBag size={14} className="text-orange-500" /></span>}
-                            {note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}
+                            {note.taxRelevant && (
+                                <span title="In Steuer importiert">
+                                    <Receipt size={14} className="text-blue-500" />
+                                </span>
+                            )}
                             {getIconForType(note.type)}
                         </div>
                     </div>
-                    <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">{renderNotePreview(note.content, searchQuery)}</div>
+                    <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">
+                        {renderNotePreview(note.content, searchQuery)}
+                    </div>
                     <div className="flex items-center justify-between mt-2">
                         <div className="flex gap-2 flex-wrap">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getCategoryColor(note.category)}`}>{note.category}</span>
-                            {note.subCategory && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600 border border-gray-200">{note.subCategory}</span>}
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getCategoryColor(note.category)}`}>
+                                {note.category}
+                            </span>
+                            {note.subCategory && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                                    {note.subCategory}
+                                </span>
+                            )}
                         </div>
                         <span className="text-[10px] text-gray-300">{new Date(note.created).toLocaleDateString()}</span>
                     </div>
@@ -1310,55 +1478,138 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       </div>
 
       {/* Resizer List -> Detail */}
-      <div className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10" onMouseDown={startResizing('list')} />
+      <div 
+        className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10"
+        onMouseDown={startResizing('list')}
+      />
 
-      {/* 3. DETAIL / EDITOR */}
+      {/* 3. DETAIL / EDITOR - Mobile Overlay or Desktop Column */}
       <div className={`flex-1 flex flex-col bg-gray-50/30 ${selectedNoteId ? 'fixed inset-0 z-[100] bg-white md:static h-[100dvh]' : 'hidden md:flex'}`}>
          {selectedNote ? (
              <>
-                {/* MODIFIED HEADER WITH SAFE AREA PADDING */}
-                <div className="px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 gap-y-2">
+                <div className="px-4 pb-3 border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 pt-[calc(env(safe-area-inset-top)+1.5rem)] gap-y-2">
                     <div className="flex items-center gap-3 flex-1 mr-2 overflow-hidden min-w-[200px]">
-                        <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full shrink-0"><ArrowLeft size={20} /></button>
+                        {/* Mobile Back Button */}
+                        <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 mt-1 text-gray-500 hover:bg-gray-100 rounded-full shrink-0">
+                           <ArrowLeft size={20} />
+                        </button>
+                        
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                                <input type="text" value={selectedNote.title} onChange={(e) => updateSelectedNote({ title: e.target.value })} className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0" placeholder="Titel..."/>
-                                {selectedNote.taxRelevant && <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">In Steuer importiert</span>}
-                                {selectedNote.isExpense && <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">Ausgabe Erfasst</span>}
+                                <input 
+                                    type="text" 
+                                    value={selectedNote.title} 
+                                    onChange={(e) => updateSelectedNote({ title: e.target.value })}
+                                    className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0"
+                                    placeholder="Titel..."
+                                />
+                                {selectedNote.taxRelevant && (
+                                    <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">In Steuer importiert</span>
+                                )}
+                                {selectedNote.isExpense && (
+                                    <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">Ausgabe Erfasst</span>
+                                )}
                             </div>
+                            
+                            {/* CATEGORY & SUB-CATEGORY EDITING */}
                             <div className="flex items-center gap-2 mt-1 h-6 overflow-x-auto no-scrollbar">
-                                <select value={selectedNote.category} onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" title="Kategorie ändern">
+                                <select 
+                                    value={selectedNote.category} 
+                                    onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} // Reset subcat on main change
+                                    className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" 
+                                    title="Kategorie ändern"
+                                >
                                     {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
+                                
                                 <span className="text-gray-300">/</span>
+                                
                                 {CATEGORY_STRUCTURE[selectedNote.category]?.length > 0 ? (
-                                    <select value={selectedNote.subCategory || ''} onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)} className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors">
+                                    <select 
+                                        value={selectedNote.subCategory || ''}
+                                        onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)}
+                                        className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors"
+                                    >
                                         <option value="">(Keine Unterkategorie)</option>
-                                        {CATEGORY_STRUCTURE[selectedNote.category].map(sub => <option key={sub} value={sub}>{sub}</option>)}
-                                        {selectedNote.subCategory && !CATEGORY_STRUCTURE[selectedNote.category].includes(selectedNote.subCategory) && <option value={selectedNote.subCategory}>{selectedNote.subCategory} (Custom)</option>}
+                                        {CATEGORY_STRUCTURE[selectedNote.category].map(sub => (
+                                            <option key={sub} value={sub}>{sub}</option>
+                                        ))}
                                     </select>
                                 ) : (
-                                    <div className="relative group flex items-center gap-1">
-                                        <input type="text" value={tempSubCategory} onChange={(e) => setTempSubCategory(e.target.value)} onBlur={() => { if(tempSubCategory === (selectedNote.subCategory || '')) return; changeCategory(selectedNote.category, tempSubCategory.trim() || undefined); }} placeholder="Unterkategorie..." disabled={isUpdatingCategory} className={`text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none font-medium hover:border-gray-300 transition-colors w-32 focus:w-48 focus:ring-1 focus:ring-blue-100 ${isUpdatingCategory ? 'opacity-50 cursor-wait' : ''}`} />
-                                    </div>
+                                    <span className="text-[10px] text-gray-300 italic">n/a</span>
                                 )}
+
                                 <div className="w-px h-3 bg-gray-200 mx-1"></div>
                                 <span className="text-[10px] text-gray-400 uppercase tracking-widest font-mono shrink-0">{selectedNote.year}</span>
                             </div>
                         </div>
                     </div>
                     <div className="flex items-center gap-1 md:gap-2 shrink-0">
-                        <button onClick={() => setIsLensEnabled(!isLensEnabled)} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${isLensEnabled ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`} title="Lupe"><ZoomIn size={16} /></button>
-                        
-                        {/* EXPENSE TOGGLE BUTTON */}
-                        <button onClick={toggleExpenseImport} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.isExpense ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-orange-500 hover:border-orange-100'}`} title={selectedNote.isExpense ? "Ausgabe entfernen" : "Zu Ausgaben hinzufügen"}>
+                        {/* Zoom Toggle Button */}
+                        <button 
+                            onClick={() => setIsLensEnabled(!isLensEnabled)}
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
+                                isLensEnabled 
+                                ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
+                                : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
+                            }`}
+                            title={isLensEnabled ? "Lupe deaktivieren" : "Lupe aktivieren"}
+                        >
+                            <ZoomIn size={16} />
+                        </button>
+
+                        {/* TOGGLE EXPENSE */}
+                        <button 
+                            onClick={toggleExpenseImport}
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
+                                selectedNote.isExpense
+                                ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm' 
+                                : 'bg-white border-gray-100 text-gray-300 hover:text-orange-500 hover:border-orange-100'
+                            }`}
+                            title={selectedNote.isExpense ? "Ausgabe entfernen" : "Zu Ausgaben hinzufügen"}
+                        >
                             <ShoppingBag size={16} />
                         </button>
 
-                        <button onClick={handleReanalyzeContent} disabled={isReanalyzing} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}>{isReanalyzing ? <Loader2 size={16} className="animate-spin text-purple-500" /> : <BrainCircuit size={16} />}</button>
-                        <button onClick={toggleTaxImport} disabled={isAnalyzingTax} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.taxRelevant ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`}>{isAnalyzingTax ? <Loader2 size={16} className="animate-spin text-blue-500" /> : (selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />)}</button>
+                        {/* AI RE-ANALYSIS BUTTON */}
+                        <button 
+                            onClick={handleReanalyzeContent}
+                            disabled={isReanalyzing}
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}
+                            title="Inhalt neu analysieren & kategorisieren (ohne Steuer-Import)"
+                        >
+                            {isReanalyzing ? (
+                                <Loader2 size={16} className="animate-spin text-purple-500" />
+                            ) : (
+                                <BrainCircuit size={16} />
+                            )}
+                        </button>
+
+                        {/* TAX IMPORT BUTTON */}
+                        <button 
+                            onClick={toggleTaxImport}
+                            disabled={isAnalyzingTax}
+                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
+                                selectedNote.taxRelevant 
+                                ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
+                                : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
+                            }`}
+                            title={selectedNote.taxRelevant ? "Bereits importiert (Klick zum Entfernen)" : "Via AI scannen & in Steuern importieren"}
+                        >
+                            {isAnalyzingTax ? (
+                                <Loader2 size={16} className="animate-spin text-blue-500" />
+                            ) : (
+                                <>
+                                    {selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />}
+                                </>
+                            )}
+                        </button>
+
                         <div className="w-px h-6 bg-gray-100 mx-1"></div>
-                        {selectedNote.filePath && <button onClick={openFile} className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Dokument Öffnen"><Eye size={16} /></button>}
+
+                        {selectedNote.filePath && (
+                            <button onClick={openFile} className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Dokument Öffnen"><Eye size={16} /></button>
+                        )}
                         <button onClick={deleteNote} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                     </div>
                 </div>
@@ -1367,67 +1618,100 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     {/* RICH TEXT EDITOR */}
                     {selectedNote.type === 'note' ? (
                         <div key={selectedNote.id} className="flex flex-col h-full bg-white">
-                            {/* Toolbar Omitted for brevity (same as previous) */}
+                            {/* Toolbar */}
                             <div className="flex flex-col bg-gray-50 border-b border-gray-100 shrink-0">
                                 <div className="flex items-center gap-1 p-2 overflow-x-auto flex-nowrap no-scrollbar">
-                                    <button onClick={() => execCmd('undo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><Undo size={14}/></button>
-                                    <button onClick={() => execCmd('redo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2"><Redo size={14}/></button>
+                                    <button onClick={() => execCmd('undo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Rückgängig"><Undo size={14}/></button>
+                                    <button onClick={() => execCmd('redo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Wiederholen"><Redo size={14}/></button>
+                                    
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                                    <button onClick={() => execCmd('bold')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 font-bold"><Bold size={14}/></button>
-                                    <button onClick={() => execCmd('italic')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 italic"><Italic size={14}/></button>
-                                    <button onClick={() => execCmd('underline')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 underline"><Underline size={14}/></button>
+
+                                    <button onClick={() => execCmd('bold')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 font-bold" title="Fett"><Bold size={14}/></button>
+                                    <button onClick={() => execCmd('italic')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 italic" title="Kursiv"><Italic size={14}/></button>
+                                    <button onClick={() => execCmd('underline')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 underline" title="Unterstrichen"><Underline size={14}/></button>
+                                    
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                                    <button onClick={() => execCmd('insertUnorderedList')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><List size={14}/></button>
-                                    <button onClick={insertTable} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><TableIcon size={14}/></button>
-                                    <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer"><Palette size={14} /><input ref={colorInputRef} type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => execCmd('foreColor', e.target.value)}/></div>
+
+                                    <button onClick={() => execCmd('insertUnorderedList')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Liste"><List size={14}/></button>
+                                    <button onClick={insertTable} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Tabelle einfügen"><TableIcon size={14}/></button>
+                                    
+                                    <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer" title="Textfarbe">
+                                        <Palette size={14} />
+                                        <input 
+                                            ref={colorInputRef}
+                                            type="color" 
+                                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                                            onChange={(e) => execCmd('foreColor', e.target.value)}
+                                            title="Textfarbe wählen"
+                                        />
+                                    </div>
+
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                                    <label className="p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer flex items-center gap-1"><ImagePlus size={14}/><input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} /></label>
+
+                                    <label className="p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer flex items-center gap-1" title="Bild einfügen">
+                                        <ImagePlus size={14}/>
+                                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                                    </label>
                                 </div>
-                                {activeTableCtx && <div className="flex items-center gap-1 p-1 bg-blue-50 border-t border-blue-100 overflow-x-auto flex-nowrap animate-in slide-in-from-top-1">
-                                    <button onClick={() => manipulateTable('addRowBelow')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><ArrowDown size={12}/> Zeile</button>
-                                    <button onClick={() => manipulateTable('addColRight')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><ArrowRightIcon size={12}/> Spalte</button>
-                                    <button onClick={() => manipulateTable('delRow')} className="p-1 hover:bg-red-100 rounded text-red-500 text-[10px] flex gap-1"><Trash2 size={12}/> Zeile</button>
-                                    <div className="flex-1"></div>
-                                    <button onClick={() => manipulateTable('delTable')} className="p-1 hover:bg-red-100 rounded text-red-600 text-[10px] font-bold flex gap-1 bg-white border border-red-100 shadow-sm"><X size={12}/> Löschen</button>
-                                </div>}
+                                {/* TABLE CONTEXT MENU */}
+                                {activeTableCtx && (
+                                    <div className="flex items-center gap-1 p-1 bg-blue-50 border-t border-blue-100 overflow-x-auto flex-nowrap animate-in slide-in-from-top-1">
+                                        <div className="px-2 text-[9px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1">
+                                            <Layout size={10}/> Tabelle
+                                        </div>
+                                        <button onClick={() => manipulateTable('addRowAbove')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile oben"><ArrowUp size={12}/> Zeile</button>
+                                        <button onClick={() => manipulateTable('addRowBelow')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile unten"><ArrowDown size={12}/> Zeile</button>
+                                        <div className="w-px h-3 bg-blue-200 mx-1"></div>
+                                        <button onClick={() => manipulateTable('addColLeft')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Spalte links"><ArrowLeftIcon size={12}/> Spalte</button>
+                                        <button onClick={() => manipulateTable('addColRight')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Spalte rechts"><ArrowRightIcon size={12}/> Spalte</button>
+                                        <div className="w-px h-3 bg-blue-200 mx-1"></div>
+                                        <button onClick={() => manipulateTable('delRow')} className="p-1 hover:bg-red-100 rounded text-red-500 text-[10px] flex gap-1" title="Zeile löschen"><Trash2 size={12}/> Zeile</button>
+                                        <button onClick={() => manipulateTable('delCol')} className="p-1 hover:bg-red-100 rounded text-red-500 text-[10px] flex gap-1" title="Spalte löschen"><Trash2 size={12}/> Spalte</button>
+                                        <div className="flex-1"></div>
+                                        <button onClick={() => manipulateTable('delTable')} className="p-1 hover:bg-red-100 rounded text-red-600 text-[10px] font-bold flex gap-1 bg-white border border-red-100 shadow-sm" title="Tabelle löschen"><X size={12}/> Löschen</button>
+                                    </div>
+                                )}
                             </div>
-                            <div ref={editorRef} contentEditable onInput={handleEditorInput} onPaste={handlePaste} onSelect={checkTableContext} onClick={checkTableContext} onKeyUp={checkTableContext} className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none pb-24" />
+
+                            {/* Editable Area */}
+                            <div 
+                                ref={editorRef}
+                                contentEditable
+                                onInput={handleEditorInput}
+                                onPaste={handlePaste}
+                                onSelect={checkTableContext} // Check cursor position
+                                onClick={checkTableContext} // Check cursor position
+                                onKeyUp={checkTableContext} // Check cursor position
+                                className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_td]:align-top [&_td]:break-words [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50 [&_th]:text-left pb-24"
+                                style={{ minHeight: '100px', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}
+                            />
+                            <div className="p-2 border-t border-gray-100 bg-gray-50 text-[10px] text-gray-400 flex justify-between safe-area-bottom">
+                                <span>{stripHtml(selectedNote.content).length} Zeichen</span>
+                            </div>
                         </div>
                     ) : (
                         // PREVIEW FOR FILES
                         <div className="flex-1 p-4 overflow-y-auto pb-24" style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
+                           {/* NEW USER NOTE SECTION */}
                            <div className="mb-4">
-                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1"><StickyNote size={12} /> Eigene Notizen</label>
-                               <textarea value={selectedNote.userNote || ''} onChange={(e) => updateSelectedNote({ userNote: e.target.value })} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..." />
+                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                                   <StickyNote size={12} /> Eigene Notizen
+                               </label>
+                               <textarea
+                                   value={selectedNote.userNote || ''}
+                                   onChange={(e) => updateSelectedNote({ userNote: e.target.value })}
+                                   className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all"
+                                   placeholder="Notizen zum Dokument..."
+                               />
                            </div>
 
                            {selectedNote.type === 'pdf' && activeFileBlob ? (
-                                <div className={`space-y-2 ${isFullscreen ? 'fixed inset-0 z-[200] bg-white flex flex-col' : ''}`}>
-                                    {isFullscreen && (
-                                        <div className="bg-gray-800 text-white p-3 flex justify-between items-center shrink-0">
-                                            <span className="font-bold truncate">{selectedNote.fileName}</span>
-                                            <button onClick={() => setIsFullscreen(false)}><Minimize size={24}/></button>
-                                        </div>
-                                    )}
-                                    <div className={`flex items-center gap-2 text-xs text-gray-500 font-medium px-1 ${isFullscreen ? 'hidden' : ''}`}>
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1">
                                         <FileText size={14} className="text-gray-400" />
                                         <span className="font-mono truncate">{selectedNote.fileName}</span>
                                     </div>
-                                    
-                                    {/* ACTION BAR FOR PDF */}
-                                    <div className={`flex gap-2 mb-2 p-1 overflow-x-auto no-scrollbar ${isFullscreen ? 'bg-gray-100 p-2' : ''}`}>
-                                        <button onClick={() => setIsFullscreen(!isFullscreen)} className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-bold text-gray-700 whitespace-nowrap">
-                                            {isFullscreen ? <Minimize size={14}/> : <Maximize size={14}/>} {isFullscreen ? 'Klein' : 'Gross'}
-                                        </button>
-                                        <button onClick={handleShare} className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-bold text-blue-700 whitespace-nowrap">
-                                            <Share2 size={14}/> Teilen / Senden
-                                        </button>
-                                        <button onClick={handleOpenExternal} className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-bold text-gray-700 whitespace-nowrap">
-                                            <Printer size={14}/> Drucken / Öffnen
-                                        </button>
-                                    </div>
-
-                                    <div className={`overflow-hidden border border-gray-200 rounded-lg ${isFullscreen ? 'flex-1 rounded-none border-none' : ''}`}>
+                                    <div className="overflow-x-auto border border-gray-200 rounded-lg">
                                         <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
                                     </div>
                                 </div>
@@ -1437,33 +1721,29 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                         <ImageIcon size={14} className="text-gray-400" />
                                         <span className="font-mono truncate">{selectedNote.fileName}</span>
                                     </div>
-                                    
-                                    {/* ACTION BAR FOR IMAGE */}
-                                    <div className="flex gap-2 mb-2 p-1 overflow-x-auto no-scrollbar">
-                                        <button onClick={handleShare} className="flex items-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-bold text-blue-700 whitespace-nowrap">
-                                            <Share2 size={14}/> Teilen
-                                        </button>
-                                        <button onClick={handleOpenExternal} className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-bold text-gray-700 whitespace-nowrap">
-                                            <Printer size={14}/> Öffnen
-                                        </button>
-                                    </div>
-
+                                    {/* Simplified Image Preview if activeFileBlob exists */}
                                     {activeFileBlob && (
-                                        <div className="rounded-lg border border-gray-200 overflow-hidden shadow-sm bg-gray-50 flex items-center justify-center min-h-[200px]">
-                                            <BlobImage blob={activeFileBlob} alt="Preview" className="w-full h-auto max-h-[70vh] object-contain" />
+                                        <div className="rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                                            <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
                                         </div>
                                     )}
                                     <div className="space-y-1 mt-4">
-                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text / Details</h5>
-                                        {/* HTML RENDERING FIX: Use dangerousHTML instead of textarea */}
+                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text</h5>
                                         <div className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 leading-relaxed overflow-x-auto" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
                                     </div>
                                 </div>
                             ) : (
                                 <div className="flex flex-col items-center justify-center h-full text-center space-y-6">
-                                    <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>{selectedNote.type === 'word' ? <FileType size={48} /> : <FileSpreadsheet size={48} />}</div>
-                                    <div className="space-y-2"><h3 className="text-xl font-black text-gray-800">{selectedNote.type === 'word' ? 'Word Dokument' : 'Excel Tabelle'}</h3><p className="text-sm text-gray-400 max-w-md mx-auto">Inhalt extrahiert:<br/><span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span></p></div>
-                                    {selectedNote.filePath && <button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>}
+                                    <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                                        {selectedNote.type === 'word' ? <FileType size={48} /> : <FileSpreadsheet size={48} />}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <h3 className="text-xl font-black text-gray-800">{selectedNote.type === 'word' ? 'Word Dokument' : 'Excel Tabelle'}</h3>
+                                        <p className="text-sm text-gray-400 max-w-md mx-auto">Inhalt extrahiert:<br/><span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span></p>
+                                    </div>
+                                    {selectedNote.filePath && (
+                                        <button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -1487,8 +1767,14 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                       <button onClick={() => setTableModal({...tableModal, open: false})} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Zeilen</label><input type="number" min="1" max="50" value={tableModal.rows} onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/></div>
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Spalten</label><input type="number" min="1" max="20" value={tableModal.cols} onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-gray-400">Zeilen</label>
+                          <input type="number" min="1" max="50" value={tableModal.rows} onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-gray-400">Spalten</label>
+                          <input type="number" min="1" max="20" value={tableModal.cols} onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
+                      </div>
                   </div>
                   <button onClick={confirmInsertTable} className="w-full bg-[#16325c] text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-800 transition-colors">Einfügen</button>
               </div>
@@ -1503,7 +1789,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                       <div className="flex items-center gap-2"><Tag size={18} className="text-blue-500" /><div><h3 className="font-bold text-gray-800">Stichwörter</h3><p className="text-xs text-gray-400">Für Kategorie: <span className="font-bold text-blue-600">{ruleModalCat}</span></p></div></div>
                       <button onClick={() => setRuleModalCat(null)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
                   </div>
-                  <div className="space-y-2"><div className="flex gap-2"><input type="text" autoFocus placeholder="Neues Stichwort..." value={newKeyword} onChange={(e) => setNewKeyword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addKeyword()} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/><button onClick={addKeyword} className="bg-blue-600 text-white px-3 rounded-lg hover:bg-blue-700"><Plus size={18}/></button></div></div>
+                  <div className="space-y-2">
+                      <div className="flex gap-2"><input type="text" autoFocus placeholder="Neues Stichwort..." value={newKeyword} onChange={(e) => setNewKeyword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addKeyword()} className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/><button onClick={addKeyword} className="bg-blue-600 text-white px-3 rounded-lg hover:bg-blue-700"><Plus size={18}/></button></div>
+                  </div>
                   <div className="max-h-60 overflow-y-auto space-y-1 py-2">
                       {(data.categoryRules?.[ruleModalCat] || []).map(keyword => (<div key={keyword} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg group"><span className="text-sm font-medium text-gray-700">{keyword}</span><button onClick={() => removeKeyword(keyword)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button></div>))}
                       {(!data.categoryRules?.[ruleModalCat] || data.categoryRules[ruleModalCat].length === 0) && (<div className="text-center py-4 text-xs text-gray-300 italic">Keine eigenen Stichwörter definiert.</div>)}
@@ -1512,11 +1800,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
       )}
 
-      {/* FLOATING TOOLTIP */}
+      {/* NEW: FLOATING TOOLTIP RENDERER (FIXED & COMPACT) */}
       {tooltip && (
-          <div className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10" style={{ top: tooltip.y, left: tooltip.x, transform: 'translateY(-50%)' }}>
+          <div 
+              className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10"
+              style={{ top: tooltip.y, left: tooltip.x, transform: 'translateY(-50%)' }}
+          >
               <div className="font-bold mb-1 border-b border-white/10 pb-1 text-blue-300 uppercase tracking-wider">{tooltip.title}</div>
               <div className="text-gray-300 font-medium">{tooltip.content}</div>
+              {/* Triangle pointing left */}
               <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-r-[6px] border-r-black/90 border-b-[5px] border-b-transparent"></div>
           </div>
       )}

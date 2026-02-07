@@ -1,4 +1,3 @@
-
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
 import { createWorker } from 'tesseract.js';
@@ -8,7 +7,7 @@ import * as mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
-import { NoteDocument, DocCategory, AppData, TaxExpense, ExpenseEntry } from '../types';
+import { NoteDocument, DocCategory, AppData, TaxExpense, ExpenseEntry, ExpenseItem } from '../types';
 import { VaultService } from './vaultService';
 import { DBService } from './dbService';
 import { GeminiService } from './geminiService';
@@ -313,15 +312,26 @@ export class DocumentService {
                     
                     if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
                         const d = aiResult.dailyExpenseData;
+                        const itemListHtml = d.items ? d.items.map(i => `
+                            <tr>
+                                <td style="padding:2px 0;">${i.name}</td>
+                                <td style="text-align:right; font-weight:bold;">${i.price.toFixed(2)}</td>
+                            </tr>`).join('') : '';
+
                         contentHtml += `
                         <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
                             <strong style="font-size:11px; text-transform:uppercase; color:#666;">Beleg Details:</strong><br/>
                             <table style="width:100%; font-size:13px; margin-top:5px;">
                                 <tr><td style="color:#888;">Händler:</td><td><strong>${d.merchant}</strong></td></tr>
-                                <tr><td style="color:#888;">Betrag:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
+                                <tr><td style="color:#888;">Total:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
                                 <tr><td style="color:#888;">Kategorie:</td><td>${d.expenseCategory}</td></tr>
-                                ${d.items && d.items.length > 0 ? `<tr><td style="color:#888; vertical-align:top;">Items:</td><td style="font-size:11px;">${d.items.join(', ')}</td></tr>` : ''}
                             </table>
+                            ${itemListHtml ? `
+                            <div style="margin-top:10px; background:#f9fafb; padding:8px; border-radius:6px;">
+                                <table style="width:100%; font-size:12px; color:#4b5563;">
+                                    ${itemListHtml}
+                                </table>
+                            </div>` : ''}
                         </div>`;
                     }
 
@@ -346,7 +356,7 @@ export class DocumentService {
                             location: expense.location,
                             receiptId: dbId,
                             isTaxRelevant: aiResult.isTaxRelevant,
-                            items: expense.items // PASS THE EXTRACTED ITEMS
+                            items: expense.items // PASS THE EXTRACTED ITEMS (Array of Objects)
                         });
                     }
 

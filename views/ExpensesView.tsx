@@ -23,7 +23,8 @@ import {
   ChevronLeft,
   ShoppingBasket,
   Pencil,
-  Save
+  Save,
+  Filter
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -89,20 +90,69 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setCurrentYear(globalYear);
   }, [globalYear]);
 
+  // --- HELPER: GET MATCH DATA ---
+  // Returns the total value of items matching the search term within a single receipt
+  const getMatchData = (e: ExpenseEntry) => {
+      if (!searchTerm) return { matchTotal: 0, matchedItems: [] };
+      
+      const term = searchTerm.toLowerCase();
+      let matchTotal = 0;
+      const matchedItems: {name: string, price: number}[] = [];
+
+      // Check merchant/description matches (Full Receipt Match)
+      const isHeaderMatch = e.merchant.toLowerCase().includes(term) || (e.description && e.description.toLowerCase().includes(term));
+      
+      if (e.items && e.items.length > 0) {
+          e.items.forEach(item => {
+              const name = typeof item === 'string' ? item : item.name;
+              const price = typeof item === 'string' ? 0 : item.price; // Legacy strings have 0 price effectively for this calc
+              
+              if (name.toLowerCase().includes(term)) {
+                  matchTotal += price;
+                  matchedItems.push({ name, price });
+              }
+          });
+      }
+
+      // If header matches but NO specific items matched (or no items exist), 
+      // treat the WHOLE receipt as the match value
+      if (isHeaderMatch && matchedItems.length === 0) {
+          matchTotal = e.amount;
+      }
+
+      return { matchTotal, matchedItems, isHeaderMatch };
+  };
+
   // Derived Data
   const allExpenses = data.dailyExpenses?.[currentYear] || [];
   
   const filteredExpenses = allExpenses.filter(e => {
       const d = new Date(e.date);
       const matchesMonth = d.getMonth() + 1 === currentMonth;
-      const matchesSearch = !searchTerm || 
-          e.merchant.toLowerCase().includes(searchTerm.toLowerCase()) || 
-          e.description?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      if (!searchTerm) return matchesMonth;
+
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = 
+          e.merchant.toLowerCase().includes(term) || 
+          e.description?.toLowerCase().includes(term) ||
+          e.items?.some(item => {
+              const name = typeof item === 'string' ? item : item.name;
+              return name.toLowerCase().includes(term);
+          });
+          
       return matchesMonth && matchesSearch;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   // Statistics
   const totalSpend = filteredExpenses.reduce((sum, e) => sum + (e.amount * e.rate), 0);
+  
+  // Specific Search Stats
+  const searchTotalSpend = searchTerm ? filteredExpenses.reduce((sum, e) => {
+      const { matchTotal } = getMatchData(e);
+      // Convert matchTotal (which is in original currency) to CHF
+      return sum + (matchTotal * e.rate);
+  }, 0) : 0;
   
   const catStats = EXPENSE_CATEGORIES.map(cat => {
       const sum = filteredExpenses.filter(e => e.category === cat).reduce((s, e) => s + (e.amount * e.rate), 0);
@@ -172,7 +222,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   location: expData.location,
                   isTaxRelevant: result.isTaxRelevant,
                   receiptId: receiptId,
-                  items: expData.items // EXTRACTED ITEMS
+                  items: expData.items // EXTRACTED ITEMS (Supports Objects)
               };
 
               const newData = { ...data };
@@ -203,8 +253,13 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const startEditing = (entry: ExpenseEntry) => {
       setEditingId(entry.id);
       setEditForm({ ...entry });
-      // Convert items array to newline separated string for textarea
-      setEditItemsText(entry.items ? entry.items.join('\n') : '');
+      // Convert items array to string for textarea
+      const text = entry.items ? entry.items.map(item => {
+          if (typeof item === 'string') return item;
+          return `${item.name}: ${item.price.toFixed(2)}`;
+      }).join('\n') : '';
+      
+      setEditItemsText(text);
   };
 
   const saveEdit = () => {
@@ -212,40 +267,42 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
       const newData = { ...data };
       
-      // Determine original year (from current view or data)
-      // Since editingId comes from current filtered list, it's mostly in currentYear, 
-      // but we should find where it actually is to be safe if we want to support cross-year editing later.
-      // For now, assuming it's in `currentYear` from the view state.
       let originalYear = currentYear;
       
-      // Check if date changed significantly (year change)
       const newDateStr = editForm.date || new Date().toISOString().split('T')[0];
       const newYear = newDateStr.split('-')[0];
 
-      // Parse items from textarea
-      const updatedItems = editItemsText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+      // Parse items from textarea (Supports "Name: Price")
+      const updatedItems = editItemsText.split('\n').map(s => {
+          const trimS = s.trim();
+          if (!trimS) return null;
+          
+          if (trimS.includes(':')) {
+              const parts = trimS.split(':');
+              const price = parseFloat(parts.pop() || '0');
+              const name = parts.join(':').trim();
+              if (name && !isNaN(price)) {
+                  return { name, price };
+              }
+          }
+          return trimS;
+      }).filter(s => s !== null) as any[];
 
       const updatedEntry: ExpenseEntry = {
           ...editForm as ExpenseEntry,
           date: newDateStr,
           items: updatedItems,
-          // Recalculate rate if currency changed manually
           rate: editForm.currency === 'USD' ? (data.tax.rateUSD || 0.85) : 
                 (editForm.currency === 'EUR' ? (data.tax.rateEUR || 0.94) : 1)
       };
 
-      // Remove from old location
       const oldYearExpenses = newData.dailyExpenses[originalYear] || [];
       const filteredOld = oldYearExpenses.filter(e => e.id !== editingId);
       
-      // If year didn't change, just update in place (via filter + push or map)
       if (originalYear === newYear) {
-          // Use map to preserve order or just push? Let's push to keep it simple or splice.
-          // Filtered + Push changes order. Let's map.
           const updatedList = oldYearExpenses.map(e => e.id === editingId ? updatedEntry : e);
           newData.dailyExpenses[originalYear] = updatedList;
       } else {
-          // Year changed!
           newData.dailyExpenses[originalYear] = filteredOld;
           if (!newData.dailyExpenses[newYear]) newData.dailyExpenses[newYear] = [];
           newData.dailyExpenses[newYear].push(updatedEntry);
@@ -279,20 +336,14 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       const blob = await DBService.getFile(id);
       if(blob) {
           setViewingReceiptBlob(blob);
-          
           try {
-              // Check if HEIC
               const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif' || (!blob.type && blob.size > 0);
-              
               if (isHeic) {
                   try {
-                      // Attempt conversion
                       const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
                       const jpgBlob = Array.isArray(result) ? result[0] : result;
                       setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
                   } catch (convErr) {
-                      console.error("HEIC Conversion Failed", convErr);
-                      // Fallback: Try native
                       setViewingReceiptSrc(URL.createObjectURL(blob));
                       setReceiptError("Vorschau evtl. eingeschränkt (HEIC Format). Bitte 'Download' nutzen.");
                   }
@@ -300,7 +351,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   setViewingReceiptSrc(URL.createObjectURL(blob));
               }
           } catch (e) {
-              console.error("Image loading failed", e);
               setReceiptError("Fehler beim Laden des Bildes.");
           } finally {
               setIsConvertingReceipt(false);
@@ -335,7 +385,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
           
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-              {/* Month Nav Group */}
               <div className="flex items-center bg-gray-50 rounded-xl p-1 shrink-0">
                   <button onClick={() => setCurrentMonth(prev => prev === 1 ? 12 : prev - 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronLeft size={16}/></button>
                   <div className="px-2 w-24 text-center font-black text-gray-700 text-sm">
@@ -343,12 +392,8 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   </div>
                   <button onClick={() => setCurrentMonth(prev => prev === 12 ? 1 : prev + 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronRight size={16}/></button>
               </div>
-              
               <div className="hidden md:block w-px h-8 bg-gray-100 mx-1 shrink-0"></div>
-              
-              {/* Buttons Group - Flex 1 on mobile to fill row */}
               <div className="flex gap-2 flex-1 md:flex-none min-w-[200px]">
-                  {/* SMART SCAN BUTTON */}
                   <button 
                       onClick={() => scanInputRef.current?.click()} 
                       disabled={isScanning}
@@ -358,7 +403,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       Scan
                   </button>
                   <input type="file" ref={scanInputRef} className="hidden" accept="image/*,application/pdf" onChange={handleSmartScan} />
-
                   <button onClick={() => setIsAdding(true)} className="flex-1 md:flex-none px-3 py-2 bg-[#16325c] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-800 shadow-lg shadow-blue-900/10 whitespace-nowrap">
                       <Plus size={14} /> Neu
                   </button>
@@ -366,199 +410,86 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
       </div>
 
-      {/* RECEIPT PREVIEW MODAL */}
-      {viewingReceiptBlob && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/80 backdrop-blur-sm p-4 animate-in fade-in" onClick={closeReceiptModal}>
-              <div className="bg-white rounded-2xl shadow-2xl overflow-hidden max-w-4xl w-full max-h-[90vh] flex flex-col relative" onClick={e => e.stopPropagation()}>
-                  <button onClick={closeReceiptModal} className="absolute top-2 right-2 p-2 bg-white/50 hover:bg-white rounded-full text-gray-800 shadow-sm z-10"><X size={20} /></button>
-                  
-                  <div className="flex-1 overflow-auto flex items-center justify-center bg-gray-50 p-4 min-h-[300px]">
-                      {isConvertingReceipt ? (
-                          <div className="flex flex-col items-center gap-3 text-gray-400">
-                              <Loader2 size={32} className="animate-spin text-blue-500" />
-                              <span className="text-xs font-bold uppercase tracking-widest">Lade Bild...</span>
-                          </div>
-                      ) : viewingReceiptBlob.type === 'application/pdf' ? (
-                          <iframe src={viewingReceiptSrc || ''} className="w-full h-[80vh]" title="PDF Preview"></iframe>
-                      ) : (
-                          <div className="relative">
-                              <img src={viewingReceiptSrc || ''} alt="Receipt" className="max-w-full max-h-[80vh] object-contain shadow-lg rounded-lg" />
-                              {receiptError && (
-                                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-red-100 text-red-600 px-3 py-1 rounded-lg text-xs font-bold shadow-md">
-                                      {receiptError}
-                                  </div>
-                              )}
+      {/* DASHBOARD STATS (ADAPTIVE SEARCH SUMMARY) */}
+      {searchTerm ? (
+          <div className="bg-white p-6 rounded-3xl border border-blue-100 shadow-lg shadow-blue-900/5 animate-in slide-in-from-top-2">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                      <div className="p-3 bg-purple-50 text-purple-600 rounded-2xl">
+                          <Search size={24} />
+                      </div>
+                      <div>
+                          <p className="text-[10px] uppercase font-bold text-purple-400 tracking-widest">Gefilterte Ausgaben für</p>
+                          <h3 className="text-2xl font-black text-gray-800">"{searchTerm}"</h3>
+                      </div>
+                  </div>
+                  <div className="text-right">
+                      <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Total {monthNames[currentMonth-1]}</p>
+                      <h3 className="text-3xl font-black text-purple-600">
+                          {searchTotalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-purple-300">CHF</span>
+                      </h3>
+                      <p className="text-xs font-bold text-gray-400 mt-1">{filteredExpenses.length} Einkäufe gefunden</p>
+                  </div>
+              </div>
+          </div>
+      ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Main Stat */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                  <div>
+                      <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mb-1">Ausgaben Total</p>
+                      <h3 className="text-3xl font-black text-gray-800">{totalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-gray-400">CHF</span></h3>
+                  </div>
+                  <div className="mt-6">
+                      {catStats.length > 0 && (
+                          <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-xl border border-orange-100">
+                              <div className="p-2 bg-white rounded-lg text-orange-500 shadow-sm"><ShoppingBag size={16}/></div>
+                              <div>
+                                  <p className="text-[10px] font-bold text-orange-400 uppercase">Top Kategorie</p>
+                                  <p className="text-sm font-black text-orange-700">{catStats[0].name} ({Math.round(catStats[0].value/totalSpend*100)}%)</p>
+                              </div>
                           </div>
                       )}
                   </div>
-                  
-                  <div className="p-4 bg-white border-t border-gray-100 flex justify-between items-center">
-                      <span className="text-xs font-bold text-gray-400 uppercase">{viewingReceiptBlob.type || 'Unbekanntes Format'} - {(viewingReceiptBlob.size / 1024).toFixed(0)} KB</span>
-                      <a href={viewingReceiptSrc || '#'} download="receipt_download" className="text-blue-600 text-xs font-bold hover:underline flex items-center gap-1"><FileText size={14}/> Original Download</a>
-                  </div>
               </div>
-          </div>
-      )}
 
-      {/* EDIT MODAL */}
-      {editingId && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-lg space-y-4 animate-in zoom-in-95">
-                  <h3 className="font-black text-lg text-gray-800 flex items-center gap-2"><Pencil size={18} className="text-blue-500"/> Ausgabe bearbeiten</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Empfänger</label>
-                          <input type="text" value={editForm.merchant || ''} onChange={(e) => setEditForm({...editForm, merchant: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" />
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
-                          <div className="flex gap-2">
-                              <input type="number" value={editForm.amount || 0} onChange={(e) => setEditForm({...editForm, amount: parseFloat(e.target.value) || 0})} className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" />
-                              <select value={editForm.currency} onChange={(e) => setEditForm({...editForm, currency: e.target.value})} className="bg-gray-100 rounded-xl px-2 text-xs font-bold outline-none">
-                                  <option value="CHF">CHF</option>
-                                  <option value="EUR">EUR</option>
-                                  <option value="USD">USD</option>
-                              </select>
+              {/* Charts */}
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Verteilung</h4>
+                  <div className="w-full h-32">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                              <Pie data={catStats} innerRadius={35} outerRadius={50} paddingAngle={2} dataKey="value">
+                                  {catStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                              </Pie>
+                              <Tooltip formatter={(val: number) => val.toFixed(2) + ' CHF'} />
+                          </PieChart>
+                      </ResponsiveContainer>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-center mt-2">
+                      {catStats.slice(0,3).map((c, i) => (
+                          <div key={c.name} className="flex items-center gap-1 text-[10px] font-bold text-gray-500">
+                              <div className="w-2 h-2 rounded-full" style={{backgroundColor: COLORS[i]}}></div> {c.name}
                           </div>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
-                          <select value={editForm.category} onChange={(e) => setEditForm({...editForm, category: e.target.value as any})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
-                              {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
-                          <input type="date" value={editForm.date || ''} onChange={(e) => setEditForm({...editForm, date: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-medium outline-none" />
-                      </div>
-                      <div className="col-span-2 space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Ort (Optional)</label>
-                          <input type="text" value={editForm.location || ''} onChange={(e) => setEditForm({...editForm, location: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-medium outline-none" />
-                      </div>
-                      <div className="col-span-2 space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Gekaufte Artikel (Pro Zeile ein Item)</label>
-                          <textarea 
-                            value={editItemsText} 
-                            onChange={(e) => setEditItemsText(e.target.value)}
-                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-medium outline-none h-24 resize-none"
-                            placeholder="Milch&#10;Brot&#10;Käse"
-                          />
-                      </div>
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                      <button onClick={() => setEditingId(null)} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl transition-colors">Abbrechen</button>
-                      <button onClick={saveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold text-sm rounded-xl hover:bg-blue-700 transition-colors shadow-lg flex items-center justify-center gap-2">
-                          <Save size={16} /> Speichern
-                      </button>
+                      ))}
                   </div>
               </div>
-          </div>
-      )}
 
-      {/* Adding Modal */}
-      {isAdding && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-lg space-y-4 animate-in zoom-in-95">
-                  <h3 className="font-black text-lg text-gray-800">Neue Ausgabe erfassen</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Empfänger</label>
-                          <input type="text" value={newExpense.merchant} onChange={(e) => setNewExpense({...newExpense, merchant: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" placeholder="z.B. Coop" autoFocus />
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
-                          <div className="flex gap-2">
-                              <input type="number" value={newExpense.amount} onChange={(e) => setNewExpense({...newExpense, amount: e.target.value as any})} className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" placeholder="0.00" />
-                              <select value={newExpense.currency} onChange={(e) => setNewExpense({...newExpense, currency: e.target.value})} className="bg-gray-100 rounded-xl px-2 text-xs font-bold outline-none">
-                                  <option value="CHF">CHF</option>
-                                  <option value="EUR">EUR</option>
-                                  <option value="USD">USD</option>
-                              </select>
-                          </div>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
-                          <select value={newExpense.category} onChange={(e) => setNewExpense({...newExpense, category: e.target.value as any})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
-                              {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
-                          <input type="date" value={newExpense.date} onChange={(e) => setNewExpense({...newExpense, date: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-medium outline-none" />
-                      </div>
-                      <div className="col-span-2 space-y-1">
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Ort (Optional)</label>
-                          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-                              <MapPin size={14} className="text-gray-400"/>
-                              <input type="text" value={newExpense.location || ''} onChange={(e) => setNewExpense({...newExpense, location: e.target.value})} className="bg-transparent w-full text-sm font-medium outline-none" placeholder="z.B. Zürich" />
-                          </div>
-                      </div>
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                      <button onClick={() => setIsAdding(false)} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl transition-colors">Abbrechen</button>
-                      <button onClick={addExpense} className="flex-1 py-3 bg-blue-600 text-white font-bold text-sm rounded-xl hover:bg-blue-700 transition-colors shadow-lg">Speichern</button>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* Dashboard Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Stat */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-              <div>
-                  <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mb-1">Ausgaben Total</p>
-                  <h3 className="text-3xl font-black text-gray-800">{totalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-gray-400">CHF</span></h3>
-              </div>
-              <div className="mt-6">
-                  {catStats.length > 0 && (
-                      <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-xl border border-orange-100">
-                          <div className="p-2 bg-white rounded-lg text-orange-500 shadow-sm"><ShoppingBag size={16}/></div>
-                          <div>
-                              <p className="text-[10px] font-bold text-orange-400 uppercase">Top Kategorie</p>
-                              <p className="text-sm font-black text-orange-700">{catStats[0].name} ({Math.round(catStats[0].value/totalSpend*100)}%)</p>
-                          </div>
-                      </div>
-                  )}
-              </div>
-          </div>
-
-          {/* Charts */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Verteilung</h4>
-              <div className="w-full h-32">
-                  <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                          <Pie data={catStats} innerRadius={35} outerRadius={50} paddingAngle={2} dataKey="value">
-                              {catStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                          </Pie>
-                          <Tooltip formatter={(val: number) => val.toFixed(2) + ' CHF'} />
-                      </PieChart>
-                  </ResponsiveContainer>
-              </div>
-              <div className="flex flex-wrap gap-2 justify-center mt-2">
-                  {catStats.slice(0,3).map((c, i) => (
-                      <div key={c.name} className="flex items-center gap-1 text-[10px] font-bold text-gray-500">
-                          <div className="w-2 h-2 rounded-full" style={{backgroundColor: COLORS[i]}}></div> {c.name}
-                      </div>
-                  ))}
-              </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Tagesverlauf</h4>
-              <div className="w-full h-32">
-                  <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={dailyData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                          <XAxis dataKey="day" hide />
-                          <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
-                          <Bar dataKey="value" fill="#3b82f6" radius={[2, 2, 0, 0]} />
-                      </BarChart>
+              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Tagesverlauf</h4>
+                  <div className="w-full h-32">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={dailyData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                              <XAxis dataKey="day" hide />
+                              <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
+                              <Bar dataKey="value" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+                          </BarChart>
                   </ResponsiveContainer>
               </div>
           </div>
       </div>
+      )}
 
       {/* Transaction List */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
@@ -574,16 +505,26 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
                       <tr>
                           <th className="px-6 py-4">Datum</th>
-                          <th className="px-6 py-4">Händler / Kontext</th>
+                          <th className="px-6 py-4">Händler / {searchTerm ? 'Treffer' : 'Kontext'}</th>
                           <th className="px-6 py-4">Kategorie</th>
                           <th className="px-6 py-4">Ort</th>
-                          <th className="px-6 py-4 text-right">Betrag</th>
+                          <th className="px-6 py-4 text-right">
+                              {searchTerm ? 'Item-Preis' : 'Betrag'}
+                          </th>
                           <th className="px-4 py-4 text-center">Beleg</th>
                           <th className="px-4 py-4 text-right">Aktionen</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                      {filteredExpenses.map(e => (
+                      {filteredExpenses.map(e => {
+                          const { matchTotal, matchedItems, isHeaderMatch } = getMatchData(e);
+                          
+                          // Display Logic: Show item price if searching, else show full receipt
+                          const displayAmount = searchTerm ? matchTotal : e.amount;
+                          const displayLabel = searchTerm && matchTotal > 0 ? 'Item' : 'Total';
+                          const highlightClass = searchTerm ? 'text-purple-600' : 'text-gray-800';
+
+                          return (
                           <React.Fragment key={e.id}>
                               <tr className="hover:bg-gray-50/50 transition-colors group">
                                   <td className="px-6 py-4 text-xs font-bold text-gray-500 whitespace-nowrap align-top">
@@ -593,15 +534,22 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                       <div className="flex items-start justify-between">
                                           <div>
                                               <div className="font-bold text-gray-800 text-sm">{e.merchant}</div>
-                                              {e.description && e.description !== e.merchant && <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[200px]">{e.description}</div>}
+                                              {/* Show Matches directly here if searching */}
+                                              {searchTerm && matchedItems.length > 0 ? (
+                                                  <div className="mt-1 space-y-0.5">
+                                                      {matchedItems.map((item, i) => (
+                                                          <div key={i} className="flex items-center gap-1 text-[10px]">
+                                                              <span className="bg-purple-100 text-purple-700 px-1.5 rounded font-bold">{item.name}</span>
+                                                              <span className="text-gray-400">{item.price.toFixed(2)}</span>
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              ) : (
+                                                  e.description && e.description !== e.merchant && <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[200px]">{e.description}</div>
+                                              )}
                                           </div>
-                                          {/* ITEMS TOGGLE BUTTON */}
-                                          {e.items && e.items.length > 0 && (
-                                              <button 
-                                                  onClick={() => toggleItems(e.id)} 
-                                                  className={`ml-2 p-1 rounded-full hover:bg-gray-200 transition-colors ${expandedRows[e.id] ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}
-                                                  title={`${e.items.length} Artikel anzeigen`}
-                                              >
+                                          {e.items && e.items.length > 0 && !searchTerm && (
+                                              <button onClick={() => toggleItems(e.id)} className={`ml-2 p-1 rounded-full hover:bg-gray-200 transition-colors ${expandedRows[e.id] ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
                                                   {expandedRows[e.id] ? <ChevronDown size={14} /> : <ShoppingBasket size={14} />}
                                               </button>
                                           )}
@@ -617,8 +565,18 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                       {e.location || '-'}
                                   </td>
                                   <td className="px-6 py-4 text-right align-top">
-                                      <div className="font-black text-gray-800 text-sm">{e.amount.toFixed(2)} <span className="text-[10px] text-gray-400">{e.currency}</span></div>
-                                      {e.currency !== 'CHF' && <div className="text-[9px] text-gray-400">~ {(e.amount * e.rate).toFixed(2)} CHF</div>}
+                                      <div className={`font-black text-sm ${highlightClass}`}>
+                                          {displayAmount.toFixed(2)} <span className="text-[10px] text-gray-400">{e.currency}</span>
+                                      </div>
+                                      
+                                      {/* Context: Show Full Receipt Total if searching specific items */}
+                                      {searchTerm && matchTotal > 0 && Math.abs(matchTotal - e.amount) > 0.01 && (
+                                          <div className="text-[9px] text-gray-300 mt-0.5">
+                                              von {e.amount.toFixed(2)} Total
+                                          </div>
+                                      )}
+                                      
+                                      {e.currency !== 'CHF' && <div className="text-[9px] text-gray-400">~ {(displayAmount * e.rate).toFixed(2)} CHF</div>}
                                   </td>
                                   <td className="px-4 py-4 text-center align-top">
                                       {e.receiptId && (
@@ -639,8 +597,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                   </td>
                               </tr>
                               
-                              {/* EXPANDED ITEMS LIST ROW */}
-                              {expandedRows[e.id] && e.items && (
+                              {expandedRows[e.id] && e.items && !searchTerm && (
                                   <tr className="bg-gray-50/50 animate-in slide-in-from-top-1 fade-in duration-200">
                                       <td colSpan={2}></td>
                                       <td colSpan={5} className="px-6 py-2 pb-4">
@@ -648,23 +605,50 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                               <div className="flex items-center gap-2 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-1">
                                                   <ShoppingBasket size={12}/> Einkaufskorb ({e.items.length})
                                               </div>
-                                              <ul className="text-xs text-gray-600 space-y-1 list-disc pl-4 marker:text-blue-300">
-                                                  {e.items.map((item, idx) => (
-                                                      <li key={idx}>{item}</li>
-                                                  ))}
+                                              <ul className="text-xs text-gray-600 space-y-1">
+                                                  {e.items.map((item, idx) => {
+                                                      const isObj = typeof item !== 'string';
+                                                      const name = isObj ? item.name : item;
+                                                      const price = isObj ? item.price : null;
+                                                      return (
+                                                          <li key={idx} className="flex justify-between items-center py-0.5 border-b border-gray-50 last:border-none">
+                                                              <div className="flex items-center gap-2">
+                                                                  <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                                                                  <span>{name}</span>
+                                                              </div>
+                                                              {price !== null && (
+                                                                  <span className="font-mono font-bold text-gray-400">{price.toFixed(2)}</span>
+                                                              )}
+                                                          </li>
+                                                      );
+                                                  })}
                                               </ul>
                                           </div>
                                       </td>
                                   </tr>
                               )}
                           </React.Fragment>
-                      ))}
+                      )})}
                       {filteredExpenses.length === 0 && (
                           <tr>
                               <td colSpan={7} className="px-6 py-12 text-center text-gray-400 text-xs italic">Keine Ausgaben in diesem Monat gefunden.</td>
                           </tr>
                       )}
                   </tbody>
+                  {/* SUMMARY FOOTER FOR SEARCH */}
+                  {searchTerm && filteredExpenses.length > 0 && (
+                      <tfoot className="bg-purple-50 border-t-2 border-purple-100">
+                          <tr>
+                              <td colSpan={4} className="px-6 py-4 text-right font-black text-purple-800 text-xs uppercase tracking-widest">
+                                  Total "{searchTerm}" ({monthNames[currentMonth-1]})
+                              </td>
+                              <td className="px-6 py-4 text-right font-black text-purple-700 text-sm">
+                                  {searchTotalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} CHF
+                              </td>
+                              <td colSpan={2}></td>
+                          </tr>
+                      </tfoot>
+                  )}
               </table>
           </div>
       </div>

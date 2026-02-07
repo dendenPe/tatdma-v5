@@ -1,6 +1,6 @@
 
 // GLOBAL CONSTANTS
-export const APP_VERSION = 'v5.0b';
+export const APP_VERSION = 'v5.0c';
 
 export interface Trade {
   pnl: number;
@@ -200,12 +200,19 @@ export type ExpenseCategory = 'Verpflegung' | 'Mobilität' | 'Haushalt' | 'Freiz
 
 export const EXPENSE_CATEGORIES: ExpenseCategory[] = ['Verpflegung', 'Mobilität', 'Haushalt', 'Freizeit', 'Shopping', 'Gesundheit', 'Wohnen', 'Reisen', 'Sonstiges'];
 
+// Updated Item Interface to support Prices
+export interface ExpenseItem {
+    name: string;
+    price: number;
+}
+
 export interface ExpenseEntry {
   id: string;
   date: string; // YYYY-MM-DD
   merchant: string; // "Coop", "Shell", "SBB"
   description?: string; // Context details
-  items?: string[]; // NEW: Specific items purchased (e.g. ["Milch", "Brot"])
+  // Supports legacy string[] or new ExpenseItem[]
+  items?: Array<string | ExpenseItem>; 
   amount: number;
   currency: string;
   rate: number; // Rate to CHF

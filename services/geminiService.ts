@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import * as pdfjsLib from 'pdfjs-dist';
 import { CATEGORY_STRUCTURE, EXPENSE_CATEGORIES } from "../types";
@@ -39,7 +38,8 @@ export interface AnalyzedDocument {
       expenseCategory: string;
       amount: number;
       currency: string;
-      items?: string[]; // NEW
+      // Updated items to support objects
+      items?: Array<{ name: string, price: number }>; 
   };
   paymentDetails?: {
     recipientName?: string;
@@ -249,8 +249,14 @@ export class GeminiService {
                   expenseCategory: { type: Type.STRING, enum: EXPENSE_CATEGORIES },
                   items: { 
                       type: Type.ARRAY, 
-                      items: { type: Type.STRING },
-                      description: "List of specific items purchased (e.g. 'Milk', 'Bread', 'Chicken'). Only for shopping/groceries." 
+                      items: { 
+                          type: Type.OBJECT,
+                          properties: {
+                              name: { type: Type.STRING, description: "Name of the item (e.g. Milk)" },
+                              price: { type: Type.NUMBER, description: "Single item price or total line price" }
+                          }
+                      },
+                      description: "List of specific items purchased with their prices." 
                   }
               },
               nullable: true
@@ -281,7 +287,7 @@ export class GeminiService {
       2. Extract the 'merchant' (e.g. Coop, SBB, Apple, Restaurant XYZ).
       3. Extract the 'amount' (Endbetrag / Total).
       4. Categorize into: Verpflegung, Mobilität, Haushalt, Freizeit, Shopping, Gesundheit, Wohnen, Reisen, Sonstiges.
-      5. IF IT IS A SHOPPING RECEIPT: Extract the specific items purchased into 'dailyExpenseData.items'.
+      5. IF IT IS A SHOPPING RECEIPT: Extract the specific items purchased into 'dailyExpenseData.items' with their prices.
       
       TASK: CLASSIFY
       Assign a main category from the provided list.
@@ -289,7 +295,7 @@ export class GeminiService {
       ${structureContext}
       
       Important: 
-      - If it is a receipt (Quittung), extracting the expense data AND ITEMS is the HIGHEST priority.
+      - If it is a receipt (Quittung), extracting the expense data AND INDIVIDUAL ITEM PRICES is the HIGHEST priority.
       - Ignore bad OCR text layers; trust your vision model (pixels) for numbers and names.
       - Date format: YYYY-MM-DD.
       `;

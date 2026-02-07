@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileDown, 
@@ -646,11 +645,11 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* Special Expense Modal - FULLY RESTORED & ENHANCED */}
+      {/* Special Expense Modal - STABILIZED LAYOUT */}
       {specialExpenseModalIdx !== null && data.tax.expenses[specialExpenseModalIdx] && (
-           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-           <div className="bg-white w-full max-w-5xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95 duration-300">
-              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+           <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-12 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+           <div className="bg-white w-[95vw] md:w-full max-w-5xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300 border border-gray-100 relative">
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 shrink-0 sticky top-0 z-10">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Baby size={24} /></div>
                     <div>
@@ -661,7 +660,8 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                 <button onClick={() => setSpecialExpenseModalIdx(null)} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X size={24} /></button>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-white">
+              {/* Content Body */}
+              <div className="flex-1 overflow-y-scroll p-4 md:p-8 space-y-8 bg-white overscroll-contain">
                  
                  {/* 1. SECTION: PERSONALIEN */}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -671,19 +671,19 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                          <div className="space-y-4 p-5 bg-gray-50/50 rounded-2xl border border-gray-100">
                              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><Baby size={14}/> Angaben zum Kind</h4>
                              <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.vorname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.nachname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, nachname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
                                     <input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.geburtsdatum} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
@@ -701,11 +701,11 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                          
                          {data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? (
                              <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_vorname || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_name || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_name: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
@@ -713,19 +713,19 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Strasse / Nr</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_strasse || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_strasse: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">PLZ / Ort</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_plz_ort || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_plz_ort: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Land</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_land || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_land: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
                                     <input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_geburtsdatum || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails?.empfaenger_staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
@@ -733,11 +733,11 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                          ) : (
                              <div className="grid grid-cols-2 gap-4">
                                 {/* ALIMENTE Empfänger Fields */}
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_vorname || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_vorname: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_name || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_name: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
@@ -745,19 +745,19 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Strasse / Nr</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_strasse || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_strasse: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">PLZ / Ort</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_plz_ort || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_plz_ort: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Land</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_land || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_land: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label>
                                     <input type="date" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_geburtsdatum || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_geburtsdatum: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 min-w-0">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase">Staatsangehörigkeit</label>
                                     <input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails?.empfaenger_staatsangehoerigkeit || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_staatsangehoerigkeit: e.target.value})} className="w-full border border-gray-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"/>
                                 </div>
@@ -768,7 +768,7 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
                  {/* 2. SECTION: ZAHLUNGSDETAILS */}
                  <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-                     <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-4">
+                     <div className="flex flex-col sm:flex-row items-center justify-between mb-4 border-b border-gray-100 pb-4 gap-4">
                          <h4 className="text-sm font-black text-gray-800 uppercase tracking-widest flex items-center gap-2">
                              <Calculator size={16} className="text-blue-500"/> Zahlungsdetails & Beträge
                          </h4>
@@ -809,61 +809,63 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                          </div>
                      </div>
 
-                     {/* AMOUNT INPUTS */}
-                     {(() => {
-                         const type = data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails';
-                         const details = data.tax.expenses[specialExpenseModalIdx][type];
-                         if (!details) return null;
+                     {/* AMOUNT INPUTS - Stable Container Height to avoid wobbles */}
+                     <div className="min-h-[120px]">
+                         {(() => {
+                             const type = data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' ? 'childDetails' : 'alimonyDetails';
+                             const details = data.tax.expenses[specialExpenseModalIdx][type];
+                             if (!details) return null;
 
-                         if (details.paymentFrequency === 'fix') {
-                             return (
-                                 <div className="flex items-center gap-4 py-4">
-                                     <div className="flex-1 space-y-1">
-                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Monatlicher Betrag</label>
-                                         <input 
-                                            type="number" 
-                                            value={details.monthlyAmounts[0] || 0}
-                                            onChange={(e) => handleFixAmountChange(specialExpenseModalIdx, type, parseFloat(e.target.value) || 0)}
-                                            className="w-full text-2xl font-black text-gray-800 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100"
-                                         />
-                                     </div>
-                                     <div className="flex items-center justify-center pt-6 text-gray-300 font-bold">x 12 =</div>
-                                     <div className="flex-1 space-y-1">
-                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Jahrestotal (Übertrag)</label>
-                                         <div className="w-full text-2xl font-black text-blue-600 bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-3">
-                                             {data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}
-                                         </div>
-                                     </div>
-                                 </div>
-                             );
-                         } else {
-                             // INDIVIDUAL TABLE
-                             return (
-                                 <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                                     {months.map((m, mIdx) => (
-                                         <div key={m} className="space-y-1">
-                                             <label className="text-[10px] font-bold text-gray-400 uppercase">{m}</label>
+                             if (details.paymentFrequency === 'fix') {
+                                 return (
+                                     <div className="flex items-center gap-4 py-4">
+                                         <div className="flex-1 space-y-1">
+                                             <label className="text-[10px] font-bold text-gray-400 uppercase">Monatlicher Betrag</label>
                                              <input 
-                                                type="number"
-                                                value={details.monthlyAmounts[mIdx] || 0}
-                                                onChange={(e) => {
-                                                    const newAmts = [...details.monthlyAmounts];
-                                                    newAmts[mIdx] = parseFloat(e.target.value) || 0;
-                                                    handleMonthlyAmountsChange(specialExpenseModalIdx, type, newAmts);
-                                                }}
-                                                className="w-full font-bold text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-1 focus:ring-blue-200"
+                                                type="number" 
+                                                value={details.monthlyAmounts[0] || 0}
+                                                onChange={(e) => handleFixAmountChange(specialExpenseModalIdx, type, parseFloat(e.target.value) || 0)}
+                                                className="w-full text-2xl font-black text-gray-800 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-100"
                                              />
                                          </div>
-                                     ))}
-                                     <div className="col-span-full pt-4 border-t border-gray-100 flex justify-end items-center gap-4">
-                                         <span className="text-sm font-bold text-gray-400 uppercase">Jahressumme:</span>
-                                         <span className="text-2xl font-black text-blue-600">{data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}</span>
-                                         <span className="text-xs font-bold text-gray-400">{data.tax.expenses[specialExpenseModalIdx].currency}</span>
+                                         <div className="flex items-center justify-center pt-6 text-gray-300 font-bold">x 12 =</div>
+                                         <div className="flex-1 space-y-1">
+                                             <label className="text-[10px] font-bold text-gray-400 uppercase">Jahrestotal (Übertrag)</label>
+                                             <div className="w-full text-2xl font-black text-blue-600 bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-3">
+                                                 {data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}
+                                             </div>
+                                         </div>
                                      </div>
-                                 </div>
-                             );
-                         }
-                     })()}
+                                 );
+                             } else {
+                                 // INDIVIDUAL TABLE - Fixed width columns
+                                 return (
+                                     <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                                         {months.map((m, mIdx) => (
+                                             <div key={m} className="space-y-1 min-w-0">
+                                                 <label className="text-[10px] font-bold text-gray-400 uppercase truncate">{m}</label>
+                                                 <input 
+                                                    type="number"
+                                                    value={details.monthlyAmounts[mIdx] || 0}
+                                                    onChange={(e) => {
+                                                        const newAmts = [...details.monthlyAmounts];
+                                                        newAmts[mIdx] = parseFloat(e.target.value) || 0;
+                                                        handleMonthlyAmountsChange(specialExpenseModalIdx, type, newAmts);
+                                                    }}
+                                                    className="w-full font-bold text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-1 focus:ring-blue-200"
+                                                 />
+                                             </div>
+                                         ))}
+                                         <div className="col-span-full pt-4 border-t border-gray-100 flex justify-end items-center gap-4">
+                                             <span className="text-sm font-bold text-gray-400 uppercase">Jahressumme:</span>
+                                             <span className="text-2xl font-black text-blue-600">{data.tax.expenses[specialExpenseModalIdx].amount.toFixed(2)}</span>
+                                             <span className="text-xs font-bold text-gray-400">{data.tax.expenses[specialExpenseModalIdx].currency}</span>
+                                         </div>
+                                     </div>
+                                 );
+                             }
+                         })()}
+                     </div>
                      
                      {/* Currency Info */}
                      {data.tax.expenses[specialExpenseModalIdx].currency !== 'CHF' && (
@@ -894,7 +896,7 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                  </div>
 
               </div>
-              <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-4">
+              <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-4 shrink-0">
                  <button onClick={() => setSpecialExpenseModalIdx(null)} className="px-10 py-4 bg-[#16325c] text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/20">
                      Speichern & Schliessen
                  </button>
@@ -904,6 +906,7 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       )}
 
       {/* Summary Tab */}
+      {/* ... (rest of the file remains unchanged) ... */}
       {activeSubTab === 'summary' && (
         <div className="space-y-8 animate-in fade-in duration-500">
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
