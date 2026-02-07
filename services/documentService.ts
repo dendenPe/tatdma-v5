@@ -308,28 +308,34 @@ export class DocumentService {
                     if (mime.includes('pdf') || ext === 'pdf') docType = 'pdf';
                     else if (mime.startsWith('image/') || ['jpg','jpeg','png','heic','webp','heif'].includes(ext || '')) docType = 'image';
 
-                    finalDoc = {
-                        id,
-                        title: aiResult.title || file.name,
-                        type: docType,
-                        category: finalCategory,
-                        subCategory: finalSubCategory,
-                        year: finalYear,
-                        created: new Date().toISOString(),
-                        content: aiResult.summary || "Automatisch analysiert durch AI.",
-                        fileName: file.name,
-                        tags: ['AI-Scanned'],
-                        isNew: true,
-                        taxRelevant: aiResult.isTaxRelevant
-                    };
+                    // --- GENERATE RICH HTML CONTENT FOR NOTE ---
+                    let contentHtml = aiResult.summary || "Automatisch analysiert durch AI.";
+                    
+                    if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
+                        const d = aiResult.dailyExpenseData;
+                        contentHtml += `
+                        <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
+                            <strong style="font-size:11px; text-transform:uppercase; color:#666;">Beleg Details:</strong><br/>
+                            <table style="width:100%; font-size:13px; margin-top:5px;">
+                                <tr><td style="color:#888;">Händler:</td><td><strong>${d.merchant}</strong></td></tr>
+                                <tr><td style="color:#888;">Betrag:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
+                                <tr><td style="color:#888;">Kategorie:</td><td>${d.expenseCategory}</td></tr>
+                                ${d.items && d.items.length > 0 ? `<tr><td style="color:#888; vertical-align:top;">Items:</td><td style="font-size:11px;">${d.items.join(', ')}</td></tr>` : ''}
+                            </table>
+                        </div>`;
+                    }
 
                     const dbId = `receipt_auto_${Date.now()}`;
                     await DBService.saveFile(dbId, file);
 
+                    // Create Expense if AI says so
+                    let generatedExpenseId = undefined;
                     if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
                         const expense = aiResult.dailyExpenseData;
+                        generatedExpenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+                        
                         newDailyExpenses.push({
-                            id: `expense_${Date.now()}`,
+                            id: generatedExpenseId,
                             date: aiResult.date || new Date().toISOString().split('T')[0],
                             merchant: expense.merchant || 'Unbekannt',
                             description: aiResult.title,
@@ -356,6 +362,24 @@ export class DocumentService {
                             taxRelevant: true
                         });
                     }
+
+                    // Create Final Doc with links
+                    finalDoc = {
+                        id,
+                        title: aiResult.title || file.name,
+                        type: docType,
+                        category: finalCategory,
+                        subCategory: finalSubCategory,
+                        year: finalYear,
+                        created: new Date().toISOString(),
+                        content: contentHtml, // Use rich HTML
+                        fileName: file.name,
+                        tags: ['AI-Scanned'],
+                        isNew: true,
+                        taxRelevant: aiResult.isTaxRelevant,
+                        isExpense: !!generatedExpenseId,
+                        expenseId: generatedExpenseId
+                    };
 
                 } else {
                     finalDoc = await this.processFile(file, userRules);

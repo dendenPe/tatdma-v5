@@ -21,7 +21,9 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  ShoppingBasket
+  ShoppingBasket,
+  Pencil,
+  Save
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -59,6 +61,11 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   
+  // Edit State
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<ExpenseEntry>>({});
+  const [editItemsText, setEditItemsText] = useState(''); // Textarea for items editing
+
   // Expanded Rows State (for Items)
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   
@@ -190,6 +197,64 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           setIsScanning(false);
           e.target.value = '';
       }
+  };
+
+  // --- EDIT FUNCTIONS ---
+  const startEditing = (entry: ExpenseEntry) => {
+      setEditingId(entry.id);
+      setEditForm({ ...entry });
+      // Convert items array to newline separated string for textarea
+      setEditItemsText(entry.items ? entry.items.join('\n') : '');
+  };
+
+  const saveEdit = () => {
+      if (!editForm.id || !editingId) return;
+
+      const newData = { ...data };
+      
+      // Determine original year (from current view or data)
+      // Since editingId comes from current filtered list, it's mostly in currentYear, 
+      // but we should find where it actually is to be safe if we want to support cross-year editing later.
+      // For now, assuming it's in `currentYear` from the view state.
+      let originalYear = currentYear;
+      
+      // Check if date changed significantly (year change)
+      const newDateStr = editForm.date || new Date().toISOString().split('T')[0];
+      const newYear = newDateStr.split('-')[0];
+
+      // Parse items from textarea
+      const updatedItems = editItemsText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+      const updatedEntry: ExpenseEntry = {
+          ...editForm as ExpenseEntry,
+          date: newDateStr,
+          items: updatedItems,
+          // Recalculate rate if currency changed manually
+          rate: editForm.currency === 'USD' ? (data.tax.rateUSD || 0.85) : 
+                (editForm.currency === 'EUR' ? (data.tax.rateEUR || 0.94) : 1)
+      };
+
+      // Remove from old location
+      const oldYearExpenses = newData.dailyExpenses[originalYear] || [];
+      const filteredOld = oldYearExpenses.filter(e => e.id !== editingId);
+      
+      // If year didn't change, just update in place (via filter + push or map)
+      if (originalYear === newYear) {
+          // Use map to preserve order or just push? Let's push to keep it simple or splice.
+          // Filtered + Push changes order. Let's map.
+          const updatedList = oldYearExpenses.map(e => e.id === editingId ? updatedEntry : e);
+          newData.dailyExpenses[originalYear] = updatedList;
+      } else {
+          // Year changed!
+          newData.dailyExpenses[originalYear] = filteredOld;
+          if (!newData.dailyExpenses[newYear]) newData.dailyExpenses[newYear] = [];
+          newData.dailyExpenses[newYear].push(updatedEntry);
+          alert(`Eintrag wurde in das Jahr ${newYear} verschoben.`);
+      }
+
+      onUpdate(newData);
+      setEditingId(null);
+      setEditForm({});
   };
 
   const deleteExpense = (id: string) => {
@@ -329,6 +394,61 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
       )}
 
+      {/* EDIT MODAL */}
+      {editingId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-3xl shadow-2xl p-6 w-full max-w-lg space-y-4 animate-in zoom-in-95">
+                  <h3 className="font-black text-lg text-gray-800 flex items-center gap-2"><Pencil size={18} className="text-blue-500"/> Ausgabe bearbeiten</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Empfänger</label>
+                          <input type="text" value={editForm.merchant || ''} onChange={(e) => setEditForm({...editForm, merchant: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" />
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
+                          <div className="flex gap-2">
+                              <input type="number" value={editForm.amount || 0} onChange={(e) => setEditForm({...editForm, amount: parseFloat(e.target.value) || 0})} className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" />
+                              <select value={editForm.currency} onChange={(e) => setEditForm({...editForm, currency: e.target.value})} className="bg-gray-100 rounded-xl px-2 text-xs font-bold outline-none">
+                                  <option value="CHF">CHF</option>
+                                  <option value="EUR">EUR</option>
+                                  <option value="USD">USD</option>
+                              </select>
+                          </div>
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
+                          <select value={editForm.category} onChange={(e) => setEditForm({...editForm, category: e.target.value as any})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
+                              {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
+                          <input type="date" value={editForm.date || ''} onChange={(e) => setEditForm({...editForm, date: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-medium outline-none" />
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Ort (Optional)</label>
+                          <input type="text" value={editForm.location || ''} onChange={(e) => setEditForm({...editForm, location: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-medium outline-none" />
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Gekaufte Artikel (Pro Zeile ein Item)</label>
+                          <textarea 
+                            value={editItemsText} 
+                            onChange={(e) => setEditItemsText(e.target.value)}
+                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-medium outline-none h-24 resize-none"
+                            placeholder="Milch&#10;Brot&#10;Käse"
+                          />
+                      </div>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                      <button onClick={() => setEditingId(null)} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl transition-colors">Abbrechen</button>
+                      <button onClick={saveEdit} className="flex-1 py-3 bg-blue-600 text-white font-bold text-sm rounded-xl hover:bg-blue-700 transition-colors shadow-lg flex items-center justify-center gap-2">
+                          <Save size={16} /> Speichern
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Adding Modal */}
       {isAdding && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4 animate-in fade-in">
@@ -453,7 +573,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                           <th className="px-6 py-4">Ort</th>
                           <th className="px-6 py-4 text-right">Betrag</th>
                           <th className="px-4 py-4 text-center">Beleg</th>
-                          <th className="px-4 py-4"></th>
+                          <th className="px-4 py-4 text-right">Aktionen</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -502,9 +622,14 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                       )}
                                   </td>
                                   <td className="px-4 py-4 text-right align-top">
-                                      <button onClick={() => deleteExpense(e.id)} className="p-1.5 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                                          <Trash2 size={14} />
-                                      </button>
+                                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button onClick={() => startEditing(e)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Bearbeiten">
+                                              <Pencil size={14} />
+                                          </button>
+                                          <button onClick={() => deleteExpense(e.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Löschen">
+                                              <Trash2 size={14} />
+                                          </button>
+                                      </div>
                                   </td>
                               </tr>
                               

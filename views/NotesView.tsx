@@ -49,7 +49,8 @@ import {
   Share2,
   Printer,
   Maximize,
-  Minimize
+  Minimize,
+  ShoppingBag
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
@@ -714,15 +715,34 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
             if (result.movedCount > 0) {
                 const newNotes = { ...(data.notes || {}) };
                 result.newDocs.forEach(doc => { newNotes[doc.id] = doc; });
-                let newExpenses = [...data.tax.expenses];
+                
+                // Tax Expenses
+                let newTaxExpenses = [...data.tax.expenses];
                 if (result.newTaxExpenses.length > 0) {
                     result.newTaxExpenses.forEach(exp => {
                         if (exp.currency === 'USD') exp.rate = data.tax.rateUSD || 0.85;
                         if (exp.currency === 'EUR') exp.rate = data.tax.rateEUR || 0.94;
                     });
-                    newExpenses = [...newExpenses, ...result.newTaxExpenses];
+                    newTaxExpenses = [...newTaxExpenses, ...result.newTaxExpenses];
                 }
-                onUpdate({ ...data, notes: newNotes, tax: { ...data.tax, expenses: newExpenses } });
+
+                // Daily Expenses Logic (Fix for missing updates)
+                let updatedDailyExpenses = { ...(data.dailyExpenses || {}) };
+                if (result.newDailyExpenses && result.newDailyExpenses.length > 0) {
+                     result.newDailyExpenses.forEach(exp => {
+                         const y = exp.date.split('-')[0];
+                         if (!updatedDailyExpenses[y]) updatedDailyExpenses[y] = [];
+                         updatedDailyExpenses[y] = [...updatedDailyExpenses[y], exp];
+                     });
+                }
+
+                onUpdate({ 
+                    ...data, 
+                    notes: newNotes, 
+                    tax: { ...data.tax, expenses: newTaxExpenses },
+                    dailyExpenses: updatedDailyExpenses 
+                });
+
                 const msg = `${result.movedCount} Dateien importiert`;
                 setScanMessage({ text: msg, type: 'success' });
                 if (isManual) alert(msg);
@@ -843,6 +863,104 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: true } }, tax: { ...data.tax, expenses: [...data.tax.expenses, newExpense] } });
          alert(`Importiert: ${amount} ${currency}\nKat: ${category}`);
      } catch (e: any) { alert("Fehler beim Import: " + e.message); } finally { setIsAnalyzingTax(false); }
+  };
+
+  // --- NEW: TOGGLE EXPENSE (Shopping Bag) ---
+  const toggleExpenseImport = async () => {
+      if (!selectedNoteId || !selectedNote) return;
+
+      // REMOVE from Expenses
+      if (selectedNote.isExpense) {
+          const year = selectedNote.year || new Date().getFullYear().toString();
+          let currentYearExpenses = data.dailyExpenses?.[year] || [];
+          // Filter out by linked ID or by matching title roughly if ID missing
+          if (selectedNote.expenseId) {
+              currentYearExpenses = currentYearExpenses.filter(e => e.id !== selectedNote.expenseId);
+          } else {
+              // Fallback logic
+              currentYearExpenses = currentYearExpenses.filter(e => e.description !== selectedNote.title);
+          }
+          
+          updateSelectedNote({ isExpense: false, expenseId: undefined });
+          onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, isExpense: false, expenseId: undefined } }, dailyExpenses: { ...data.dailyExpenses, [year]: currentYearExpenses } });
+          return;
+      }
+
+      // ADD to Expenses
+      // Extract data from HTML content if possible (regex fallback)
+      let amount = 0;
+      let currency = 'CHF';
+      let merchant = 'Unbekannt';
+      
+      const html = selectedNote.content || '';
+      
+      // Improved Regex for amount extraction
+      // Look for bolded amounts typical in AI output: "<strong>4.40 CHF</strong>" or "<strong>4.40</strong>"
+      // Also handles "4'200.00"
+      const amountMatch = html.match(/Betrag:.*?<strong>([\d\.'’]+)\s*(\w*)<\/strong>/) || html.match(/(\d+[\.,]\d{2})\s?(CHF|EUR|USD)/);
+      const merchantMatch = html.match(/Händler:.*?<strong>(.*?)<\/strong>/);
+      
+      if (amountMatch) {
+          // Remove Swiss thousand separators (')
+          const rawAmount = amountMatch[1].replace(/['’]/g, '');
+          amount = parseFloat(rawAmount);
+          if (amountMatch[2]) currency = amountMatch[2];
+      }
+      if (merchantMatch) {
+          merchant = merchantMatch[1];
+      }
+
+      if (amount === 0 || isNaN(amount)) {
+          const manualAmount = prompt("Betrag nicht automatisch erkannt. Bitte eingeben (z.B. 25.50):");
+          if (!manualAmount) return;
+          amount = parseFloat(manualAmount);
+      }
+
+      // Use the year from the note if available, otherwise current year
+      const year = selectedNote.year || new Date().getFullYear().toString();
+      const expenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+      
+      // Save Receipt Link
+      let receiptId = undefined;
+      let fileBlob = await DBService.getFile(selectedNote.id);
+      if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
+          fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath);
+      }
+      if (fileBlob) {
+          receiptId = `receipt_exp_${Date.now()}`;
+          await DBService.saveFile(receiptId, fileBlob);
+      }
+
+      const newEntry: ExpenseEntry = {
+          id: expenseId,
+          // If note is from previous year, try to guess date or default to YYYY-01-01? 
+          // Better: Use today's date if year matches current, else jan 1st of that year?
+          // Actually, let's just use today's date but respect the Note Year for the Year Bucket.
+          date: new Date().toISOString().split('T')[0], 
+          merchant: merchant,
+          description: selectedNote.title,
+          amount: amount,
+          currency: currency,
+          rate: 1,
+          category: 'Sonstiges', // Default
+          isTaxRelevant: false,
+          receiptId: receiptId
+      };
+
+      const currentYearExpenses = data.dailyExpenses?.[year] || [];
+      const updatedDailyExpenses = { ...data.dailyExpenses, [year]: [...currentYearExpenses, newEntry] };
+
+      // CRITICAL FIX: Construct full update objects to prevent race condition between updateSelectedNote and onUpdate
+      const updatedNote = { ...selectedNote, isExpense: true, expenseId: expenseId };
+      const updatedNotes = { ...data.notes, [selectedNoteId]: updatedNote };
+
+      onUpdate({ 
+          ...data, 
+          notes: updatedNotes,
+          dailyExpenses: updatedDailyExpenses 
+      });
+      
+      alert(`Als Ausgabe erfasst: ${amount} ${currency} bei ${merchant}\n(Jahr: ${year})`);
   };
 
   const createNote = () => {
@@ -1038,7 +1156,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 <div key={note.id} onClick={() => setSelectedNoteId(note.id)} className={`p-4 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedNoteId === note.id ? 'bg-blue-50/50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}>
                     <div className="flex items-start justify-between mb-1">
                         <h4 className={`font-bold text-sm truncate flex-1 ${selectedNoteId === note.id ? 'text-blue-700' : 'text-gray-800'}`}>{note.title}</h4>
-                        <div className="flex items-center gap-1">{note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}{getIconForType(note.type)}</div>
+                        <div className="flex items-center gap-1">
+                            {note.isExpense && <span title="Ausgabe erfasst"><ShoppingBag size={14} className="text-orange-500" /></span>}
+                            {note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}
+                            {getIconForType(note.type)}
+                        </div>
                     </div>
                     <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">{renderNotePreview(note.content, searchQuery)}</div>
                     <div className="flex items-center justify-between mt-2">
@@ -1068,6 +1190,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                             <div className="flex items-center gap-2">
                                 <input type="text" value={selectedNote.title} onChange={(e) => updateSelectedNote({ title: e.target.value })} className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0" placeholder="Titel..."/>
                                 {selectedNote.taxRelevant && <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">In Steuer importiert</span>}
+                                {selectedNote.isExpense && <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">Ausgabe Erfasst</span>}
                             </div>
                             <div className="flex items-center gap-2 mt-1 h-6 overflow-x-auto no-scrollbar">
                                 <select value={selectedNote.category} onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" title="Kategorie ändern">
@@ -1092,6 +1215,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     </div>
                     <div className="flex items-center gap-1 md:gap-2 shrink-0">
                         <button onClick={() => setIsLensEnabled(!isLensEnabled)} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${isLensEnabled ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`} title="Lupe"><ZoomIn size={16} /></button>
+                        
+                        {/* EXPENSE TOGGLE BUTTON */}
+                        <button onClick={toggleExpenseImport} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.isExpense ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-orange-500 hover:border-orange-100'}`} title={selectedNote.isExpense ? "Ausgabe entfernen" : "Zu Ausgaben hinzufügen"}>
+                            <ShoppingBag size={16} />
+                        </button>
+
                         <button onClick={handleReanalyzeContent} disabled={isReanalyzing} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}>{isReanalyzing ? <Loader2 size={16} className="animate-spin text-purple-500" /> : <BrainCircuit size={16} />}</button>
                         <button onClick={toggleTaxImport} disabled={isAnalyzingTax} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.taxRelevant ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`}>{isAnalyzingTax ? <Loader2 size={16} className="animate-spin text-blue-500" /> : (selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />)}</button>
                         <div className="w-px h-6 bg-gray-100 mx-1"></div>
@@ -1191,8 +1320,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                         </div>
                                     )}
                                     <div className="space-y-1 mt-4">
-                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text</h5>
-                                        <textarea className="w-full h-32 p-3 bg-white border border-gray-200 rounded-lg text-xs font-mono text-gray-500 leading-relaxed outline-none resize-none" value={selectedNote.content} readOnly />
+                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text / Details</h5>
+                                        {/* HTML RENDERING FIX: Use dangerousHTML instead of textarea */}
+                                        <div className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 leading-relaxed overflow-x-auto" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
                                     </div>
                                 </div>
                             ) : (

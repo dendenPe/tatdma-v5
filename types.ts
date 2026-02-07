@@ -191,6 +191,8 @@ export interface NoteDocument {
   isNew?: boolean; // For Inbox highlighting
   taxRelevant?: boolean; // Checkbox state: Imported to Tax Expenses?
   userNote?: string; // NEW: Manual user comments/notes on top of the document
+  isExpense?: boolean; // NEW: Flag for Daily Expenses
+  expenseId?: string; // NEW: ID of the linked ExpenseEntry
 }
 
 // --- NEW IN v5b: DAILY EXPENSES ---
