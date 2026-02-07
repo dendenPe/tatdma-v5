@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Wallet, 
@@ -21,6 +20,7 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   ShoppingBasket,
   Pencil,
   Save
@@ -321,42 +321,48 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-24">
+    <div className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden">
       {/* HEADER & CONTROLS */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
           <div className="flex items-center gap-4">
-              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
                   <Wallet size={24} />
               </div>
-              <div>
-                  <h2 className="text-xl font-black text-gray-800 tracking-tight">Ausgaben Journal</h2>
+              <div className="min-w-0">
+                  <h2 className="text-xl font-black text-gray-800 tracking-tight truncate">Ausgaben Journal</h2>
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{monthNames[currentMonth-1]} {currentYear}</p>
               </div>
           </div>
           
-          <div className="flex items-center gap-2">
-              <button onClick={() => setCurrentMonth(prev => prev === 1 ? 12 : prev - 1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><span className="text-lg">←</span></button>
-              <div className="bg-gray-50 px-4 py-2 rounded-xl font-black text-gray-700 w-32 text-center text-sm">
-                  {monthNames[currentMonth-1]}
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              {/* Month Nav Group */}
+              <div className="flex items-center bg-gray-50 rounded-xl p-1 shrink-0">
+                  <button onClick={() => setCurrentMonth(prev => prev === 1 ? 12 : prev - 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronLeft size={16}/></button>
+                  <div className="px-2 w-24 text-center font-black text-gray-700 text-sm">
+                      {monthNames[currentMonth-1]}
+                  </div>
+                  <button onClick={() => setCurrentMonth(prev => prev === 12 ? 1 : prev + 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronRight size={16}/></button>
               </div>
-              <button onClick={() => setCurrentMonth(prev => prev === 12 ? 1 : prev + 1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-400"><span className="text-lg">→</span></button>
               
-              <div className="w-px h-8 bg-gray-100 mx-2"></div>
+              <div className="hidden md:block w-px h-8 bg-gray-100 mx-1 shrink-0"></div>
               
-              {/* SMART SCAN BUTTON */}
-              <button 
-                  onClick={() => scanInputRef.current?.click()} 
-                  disabled={isScanning}
-                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl font-bold text-xs flex items-center gap-2 hover:shadow-lg transition-all"
-              >
-                  {isScanning ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16} />}
-                  Smart Scan
-              </button>
-              <input type="file" ref={scanInputRef} className="hidden" accept="image/*,application/pdf" onChange={handleSmartScan} />
+              {/* Buttons Group - Flex 1 on mobile to fill row */}
+              <div className="flex gap-2 flex-1 md:flex-none min-w-[200px]">
+                  {/* SMART SCAN BUTTON */}
+                  <button 
+                      onClick={() => scanInputRef.current?.click()} 
+                      disabled={isScanning}
+                      className="flex-1 md:flex-none px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:shadow-lg transition-all whitespace-nowrap"
+                  >
+                      {isScanning ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14} />}
+                      Scan
+                  </button>
+                  <input type="file" ref={scanInputRef} className="hidden" accept="image/*,application/pdf" onChange={handleSmartScan} />
 
-              <button onClick={() => setIsAdding(true)} className="px-4 py-2 bg-[#16325c] text-white rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-blue-800 shadow-lg shadow-blue-900/10">
-                  <Plus size={16} /> Manuell
-              </button>
+                  <button onClick={() => setIsAdding(true)} className="flex-1 md:flex-none px-3 py-2 bg-[#16325c] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-800 shadow-lg shadow-blue-900/10 whitespace-nowrap">
+                      <Plus size={14} /> Neu
+                  </button>
+              </div>
           </div>
       </div>
 
