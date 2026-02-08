@@ -30,7 +30,8 @@ import {
   Receipt,
   Check,
   ExternalLink,
-  Share2
+  Share2,
+  Maximize2
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -83,7 +84,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [viewingReceiptSrc, setViewingReceiptSrc] = useState<string | null>(null);
   const [isConvertingReceipt, setIsConvertingReceipt] = useState(false);
   const [receiptError, setReceiptError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null); // New non-error status
+  const [statusMessage, setStatusMessage] = useState<string | null>(null); 
   
   const scanInputRef = useRef<HTMLInputElement>(null);
   
@@ -94,19 +95,37 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       date: new Date().toISOString().split('T')[0]
   });
 
-  // --- CRITICAL FIX: Data Ref to prevent stale closures in Async operations ---
   const latestDataRef = useRef(data);
   useEffect(() => {
       latestDataRef.current = data;
   }, [data]);
 
-  // Sync Global Year
   useEffect(() => {
       setCurrentYear(globalYear);
   }, [globalYear]);
 
+  // --- HELPER: GET EXCHANGE RATE ---
+  // Retrieves rate from Portfolio (Wertpapiere) or falls back to Tax settings
+  const getExchangeRate = (currency: string, year: string): number => {
+      if (currency === 'CHF') return 1;
+
+      // 1. Try to find in Portfolio Exchange Rates (defined in HoldingsView)
+      const portfolio = data.portfolios[data.currentPortfolioId] || Object.values(data.portfolios)[0];
+      if (portfolio && portfolio.years[year] && portfolio.years[year].exchangeRates) {
+          const pair = `${currency}_CHF`; // e.g. "EUR_CHF"
+          const rate = portfolio.years[year].exchangeRates[pair];
+          if (rate && rate > 0) return rate;
+      }
+
+      // 2. Fallback to Tax Settings
+      if (currency === 'USD') return data.tax.rateUSD || 0.85;
+      if (currency === 'EUR') return data.tax.rateEUR || 0.94;
+
+      // 3. Fallback default
+      return 1;
+  };
+
   // --- HELPER: GET MATCH DATA ---
-  // Returns the total value of items matching the search term within a single receipt
   const getMatchData = (e: ExpenseEntry) => {
       if (!searchTerm) return { matchTotal: 0, matchedItems: [] };
       
@@ -114,13 +133,12 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       let matchTotal = 0;
       const matchedItems: {name: string, price: number}[] = [];
 
-      // Check merchant/description matches (Full Receipt Match)
       const isHeaderMatch = e.merchant.toLowerCase().includes(term) || (e.description && e.description.toLowerCase().includes(term));
       
       if (e.items && e.items.length > 0) {
           e.items.forEach(item => {
               const name = typeof item === 'string' ? item : item.name;
-              const price = typeof item === 'string' ? 0 : item.price; // Legacy strings have 0 price effectively for this calc
+              const price = typeof item === 'string' ? 0 : item.price;
               
               if (name.toLowerCase().includes(term)) {
                   matchTotal += price;
@@ -129,8 +147,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           });
       }
 
-      // If header matches but NO specific items matched (or no items exist), 
-      // treat the WHOLE receipt as the match value
       if (isHeaderMatch && matchedItems.length === 0) {
           matchTotal = e.amount;
       }
@@ -159,13 +175,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       return matchesMonth && matchesSearch;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // Statistics
   const totalSpend = filteredExpenses.reduce((sum, e) => sum + (e.amount * e.rate), 0);
   
-  // Specific Search Stats
   const searchTotalSpend = searchTerm ? filteredExpenses.reduce((sum, e) => {
       const { matchTotal } = getMatchData(e);
-      // Convert matchTotal (which is in original currency) to CHF
       return sum + (matchTotal * e.rate);
   }, 0) : 0;
   
@@ -174,26 +187,21 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       return { name: cat, value: sum };
   }).filter(c => c.value > 0).sort((a,b) => b.value - a.value);
 
-  // Daily Histogram Data
   const dailyData = Array.from({length: 31}, (_, i) => {
       const day = i + 1;
       const sum = filteredExpenses.filter(e => new Date(e.date).getDate() === day).reduce((s, e) => s + (e.amount * e.rate), 0);
       return { day: day.toString(), value: sum };
   });
 
-  // --- HELPER: Parse Items ---
   const parseItems = (text: string) => {
       return text.split('\n').map(s => {
           const trimS = s.trim();
           if (!trimS) return null;
-          
           if (trimS.includes(':')) {
               const parts = trimS.split(':');
               const price = parseFloat(parts.pop() || '0');
               const name = parts.join(':').trim();
-              if (name && !isNaN(price)) {
-                  return { name, price };
-              }
+              if (name && !isNaN(price)) return { name, price };
           }
           return trimS;
       }).filter(s => s !== null) as any[];
@@ -203,32 +211,37 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       if (!newExpense.amount || !newExpense.merchant) return;
       
       const items = parseItems(editItemsText);
+      const uniqueId = `exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const newDateStr = newExpense.date || new Date().toISOString().split('T')[0];
+      const newYear = newDateStr.split('-')[0];
+      
+      // Calculate Rate
+      const rate = getExchangeRate(newExpense.currency || 'CHF', newYear);
 
       const entry: ExpenseEntry = {
-          id: `exp_${Date.now()}`,
-          date: newExpense.date || new Date().toISOString().split('T')[0],
+          id: uniqueId,
+          date: newDateStr,
           merchant: newExpense.merchant,
           description: newExpense.description || '',
           amount: parseFloat(newExpense.amount as any),
           currency: newExpense.currency || 'CHF',
-          rate: newExpense.currency === 'USD' ? (data.tax.rateUSD || 0.85) : (newExpense.currency === 'EUR' ? (data.tax.rateEUR || 0.94) : 1),
+          rate: rate,
           category: newExpense.category as ExpenseCategory,
           location: newExpense.location,
           isTaxRelevant: false,
-          items: items // Add parsed items
+          items: items
       };
-
-      const newYear = entry.date.split('-')[0];
       
-      // Use Ref for safety
+      // SAFE STATE UPDATE
       const currentData = latestDataRef.current;
-      const expensesForYear = currentData.dailyExpenses?.[newYear] || [];
+      const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
+      const currentYearList = allExpensesMap[newYear] ? [...allExpensesMap[newYear]] : [];
       
-      const newData = { ...currentData };
-      if (!newData.dailyExpenses) newData.dailyExpenses = {};
-      newData.dailyExpenses[newYear] = [...expensesForYear, entry];
+      const updatedList = [...currentYearList, entry];
+      allExpensesMap[newYear] = updatedList;
+
+      onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
       
-      onUpdate(newData);
       setIsAdding(false);
       setNewExpense({ currency: 'CHF', category: 'Verpflegung', date: new Date().toISOString().split('T')[0] });
       setEditItemsText('');
@@ -237,54 +250,52 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const handleSmartScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
       setIsScanning(true);
       try {
-          // 1. Analyze File
           const result = await GeminiService.analyzeDocument(file);
-          
           if (result && result.dailyExpenseData && result.dailyExpenseData.isExpense) {
               const expData = result.dailyExpenseData;
               const date = result.date || new Date().toISOString().split('T')[0];
               const year = date.split('-')[0];
-              
-              // 2. Save Receipt Image
               const receiptId = `receipt_scan_${Date.now()}`;
               await DBService.saveFile(receiptId, file);
+              
+              const uniqueId = `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              
+              // Calculate Rate based on scanned currency
+              const rate = getExchangeRate(expData.currency || 'CHF', year);
 
               const entry: ExpenseEntry = {
-                  id: `exp_${Date.now()}`,
+                  id: uniqueId,
                   date: date,
                   merchant: expData.merchant || 'Unbekannt',
                   description: result.title || '',
                   amount: expData.amount || 0,
                   currency: expData.currency || 'CHF',
-                  rate: 1, // Logic needed for rates
+                  rate: rate,
                   category: (expData.expenseCategory as any) || 'Sonstiges',
                   location: expData.location,
                   isTaxRelevant: result.isTaxRelevant,
                   receiptId: receiptId,
-                  items: expData.items // EXTRACTED ITEMS (Supports Objects)
+                  items: expData.items
               };
-
-              // 3. CRITICAL UPDATE: Use latestDataRef to avoid stale closures
+              
+              // CRITICAL FIX: Safe atomic update
               const currentData = latestDataRef.current;
-              const newData = { ...currentData };
+              const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
+              const currentYearList = allExpensesMap[year] ? [...allExpensesMap[year]] : [];
+              const updatedList = [...currentYearList, entry];
+              allExpensesMap[year] = updatedList;
+
+              onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
               
-              if (!newData.dailyExpenses) newData.dailyExpenses = {};
-              // Create new array reference
-              const currentYearList = newData.dailyExpenses[year] ? [...newData.dailyExpenses[year]] : [];
-              currentYearList.push(entry);
-              newData.dailyExpenses[year] = currentYearList;
+              alert(`Erfasst am ${date}: ${entry.merchant} - ${entry.amount} ${entry.currency} (Kurs: ${rate})`);
               
-              onUpdate(newData);
-              alert(`Erfasst: ${entry.merchant} - ${entry.amount} ${entry.currency}`);
-              
-              // Ensure we are viewing the correct year/month
-              setCurrentYear(year);
+              if (currentYear !== year) {
+                  setCurrentYear(year);
+              }
               const m = parseInt(date.split('-')[1]);
               if (!isNaN(m)) setCurrentMonth(m);
-
           } else {
               alert("Konnte keine Ausgabendaten erkennen. Versuche es manuell.");
           }
@@ -296,55 +307,72 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       }
   };
 
-  // --- EDIT FUNCTIONS ---
   const startEditing = (entry: ExpenseEntry) => {
       setEditingId(entry.id);
       setEditForm({ ...entry });
-      // Convert items array to string for textarea
       const text = entry.items ? entry.items.map(item => {
           if (typeof item === 'string') return item;
           return `${item.name}: ${item.price.toFixed(2)}`;
       }).join('\n') : '';
-      
       setEditItemsText(text);
   };
 
   const saveEdit = () => {
       if (!editForm.id || !editingId) return;
-
+      
       const currentData = latestDataRef.current;
-      const newData = { ...currentData };
+      const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
       
+      // Find where the entry currently is
       let originalYear = currentYear;
+      let found = false;
       
+      if (allExpensesMap[originalYear]?.find(e => e.id === editingId)) {
+          found = true;
+      } else {
+          for (const y of Object.keys(allExpensesMap)) {
+              if (allExpensesMap[y].find(e => e.id === editingId)) {
+                  originalYear = y;
+                  found = true;
+                  break;
+              }
+          }
+      }
+
+      if (!found) {
+          console.warn("Entry to edit not found in data");
+      }
+
       const newDateStr = editForm.date || new Date().toISOString().split('T')[0];
       const newYear = newDateStr.split('-')[0];
-
-      // Parse items from textarea
       const updatedItems = parseItems(editItemsText);
+      
+      // Update Rate based on possibly changed currency/year
+      const rate = getExchangeRate(editForm.currency || 'CHF', newYear);
 
       const updatedEntry: ExpenseEntry = {
           ...editForm as ExpenseEntry,
           date: newDateStr,
           items: updatedItems,
-          rate: editForm.currency === 'USD' ? (data.tax.rateUSD || 0.85) : 
-                (editForm.currency === 'EUR' ? (data.tax.rateEUR || 0.94) : 1)
+          rate: rate
       };
 
-      const oldYearExpenses = newData.dailyExpenses[originalYear] || [];
-      const filteredOld = oldYearExpenses.filter(e => e.id !== editingId);
-      
-      if (originalYear === newYear) {
-          const updatedList = oldYearExpenses.map(e => e.id === editingId ? updatedEntry : e);
-          newData.dailyExpenses[originalYear] = updatedList;
-      } else {
-          newData.dailyExpenses[originalYear] = filteredOld;
-          if (!newData.dailyExpenses[newYear]) newData.dailyExpenses[newYear] = [];
-          newData.dailyExpenses[newYear].push(updatedEntry);
+      // 1. Remove from old year list
+      const oldList = allExpensesMap[originalYear] || [];
+      const filteredOldList = oldList.filter(e => e.id !== editingId);
+      allExpensesMap[originalYear] = filteredOldList;
+
+      // 2. Add to new year list
+      const newList = allExpensesMap[newYear] ? [...allExpensesMap[newYear]] : [];
+      newList.push(updatedEntry);
+      allExpensesMap[newYear] = newList;
+
+      if (originalYear !== newYear) {
           alert(`Eintrag wurde in das Jahr ${newYear} verschoben.`);
       }
 
-      onUpdate(newData);
+      onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
+      
       setEditingId(null);
       setEditForm({});
       setEditItemsText('');
@@ -353,10 +381,12 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const deleteExpense = (id: string) => {
       if(confirm("Eintrag löschen?")) {
           const currentData = latestDataRef.current;
-          const newData = { ...currentData };
-          // Ensure we filter the array for the CURRENT YEAR view
-          newData.dailyExpenses[currentYear] = (newData.dailyExpenses[currentYear] || []).filter(e => e.id !== id);
-          onUpdate(newData);
+          const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
+          
+          const list = allExpensesMap[currentYear] || [];
+          allExpensesMap[currentYear] = list.filter(e => e.id !== id);
+          
+          onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
       }
   };
 
@@ -364,35 +394,24 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // --- SMART VIEW RECEIPT (NON-BLOCKING) ---
   const viewReceipt = async (entry: ExpenseEntry) => {
       if(!entry.receiptId) return;
       
       setViewingReceiptBlob(null);
       setViewingReceiptSrc(null);
       
-      // FIXED: Use statusMessage instead of receiptError to prevent red flash
       setStatusMessage("Lade Beleg..."); 
       setReceiptError(null);
       setIsConvertingReceipt(true);
 
       try {
-          // 1. Try DB using the exact Receipt ID
           let blob = await DBService.getFile(entry.receiptId);
-          
-          // 2. If not found, check if this expense is linked to a Note
-          // (Detailed deep search)
           if (!blob) {
               setStatusMessage("Suche in Notizen/Vault...");
-              
               const notes = data.notes || {};
               const linkedNote = Object.values(notes).find((n: any) => n.expenseId === entry.id);
-              
               if (linkedNote) {
-                  // 2a. Check DB with Note ID
                   blob = await DBService.getFile(linkedNote.id);
-                  
-                  // 2b. Check Vault with Note Path
                   if (!blob && VaultService.isConnected() && linkedNote.filePath) {
                       setStatusMessage("Lade aus Vault...");
                       blob = await DocumentService.getFileFromVault(linkedNote.filePath);
@@ -412,7 +431,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                           setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
                           setStatusMessage(null);
                       } catch (convErr) {
-                          // FALLBACK: Use original blob without error text
                           setViewingReceiptSrc(URL.createObjectURL(blob));
                           setStatusMessage(null); 
                       }
@@ -444,10 +462,8 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setIsConvertingReceipt(false);
   };
 
-  // --- SHARE FUNCTION ---
   const handleShare = async () => {
       if (!viewingReceiptSrc || !viewingReceiptBlob) return;
-      
       try {
           const file = new File([viewingReceiptBlob], `beleg_${Date.now()}.jpg`, { type: viewingReceiptBlob.type || 'image/jpeg' });
           if (navigator.share) {
@@ -469,14 +485,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   return (
     <div 
         className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden"
-        style={{
-            touchAction: 'pan-y', 
-            overscrollBehaviorX: 'none'
-        }}
+        style={{ touchAction: 'pan-y', overscrollBehaviorX: 'none' }}
     >
       {/* IOS SCROLL FIX INJECTION - STRICT MOBILE MODAL STYLING */}
       <style>{`
-        /* Mobile Only Modal Fixes - Forces the modal to be rigidly fixed to bottom without wobble */
         @media (max-width: 640px) {
             .mobile-modal-fix {
                 position: fixed !important;
@@ -488,34 +500,31 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                 border-top-right-radius: 1.5rem !important;
                 display: flex !important;
                 flex-direction: column !important;
-                overflow: hidden !important; /* Prevents container from scrolling */
-                touch-action: none !important; /* Blocks all touch on container background */
+                overflow: hidden !important; 
+                touch-action: none !important; 
                 transform: translate3d(0,0,0);
                 z-index: 50 !important;
             }
-            
             .mobile-modal-scroll {
                 flex: 1;
                 overflow-y: auto;
                 overflow-x: hidden;
                 -webkit-overflow-scrolling: touch;
-                overscroll-behavior-y: contain; /* Traps scroll inside */
-                overscroll-behavior-x: none;    /* Kills horizontal bounce */
-                touch-action: pan-y;            /* Only allows vertical pan */
+                overscroll-behavior-y: contain;
+                overscroll-behavior-x: none;
+                touch-action: pan-y;
                 width: 100%;
             }
         }
-
-        /* Desktop Reset: allow modal content to scroll vertically on larger screens */
         @media (min-width: 640px) {
             .mobile-modal-fix {
                 position: relative;
                 width: auto;
-                max-width: 28rem; /* sm:max-w-md */
+                max-width: 28rem;
                 touch-action: auto;
                 display: flex;
                 flex-direction: column;
-                max-height: 90vh; /* constrain modal height so inner area can scroll */
+                max-height: 90vh;
             }
             .mobile-modal-scroll {
                 overflow-y: auto;
@@ -575,7 +584,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   <span className={`text-sm ${searchTerm ? 'text-purple-300' : 'text-gray-400'}`}> CHF</span>
               </h3>
           </div>
-          {/* Show top category only if NOT searching */}
           {!searchTerm && catStats.length > 0 && (
               <div className="text-right">
                   <div className="inline-flex items-center gap-1 p-1.5 bg-orange-50 rounded-lg">
@@ -619,7 +627,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
       ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Main Stat */}
               <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
                   <div>
                       <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mb-1">Ausgaben Total</p>
@@ -638,7 +645,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   </div>
               </div>
 
-              {/* Charts */}
               <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
                   <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Verteilung</h4>
                   <div className="w-full h-32">
@@ -679,7 +685,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
       {/* TRANSACTION LIST CONTAINER */}
       <div className="space-y-4">
-          {/* SEARCH BAR - MOBILE OPTIMIZED (FIXED FONT SIZE & WOBBLE) */}
           <div className="md:hidden">
               <div className="relative">
                   <Search size={16} className="absolute left-3 top-3 text-gray-400" />
@@ -688,13 +693,11 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       placeholder="Händler oder Produkt suchen..." 
                       value={searchTerm} 
                       onChange={(e) => setSearchTerm(e.target.value)} 
-                      // FIX: text-base prevents iOS Zoom. outline-none & transparent ring prevents layout shift
                       className="w-full pl-10 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-base font-medium shadow-sm outline-none focus:ring-0 focus:border-blue-300 transition-colors" 
                   />
               </div>
           </div>
 
-          {/* DESKTOP TABLE (HIDDEN ON MOBILE) */}
           <div className="hidden md:block bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-gray-50 flex items-center justify-between">
                   <h3 className="font-bold text-gray-800 text-sm pl-2">Transaktionen</h3>
@@ -720,7 +723,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       </thead>
                       <tbody className="divide-y divide-gray-50">
                           {filteredExpenses.map(e => {
-                              const { matchTotal, matchedItems, isHeaderMatch } = getMatchData(e);
+                              const { matchTotal, matchedItems } = getMatchData(e);
                               const displayAmount = searchTerm ? matchTotal : e.amount;
                               const highlightClass = searchTerm ? 'text-purple-600' : 'text-gray-800';
 
@@ -772,7 +775,12 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                                   von {e.amount.toFixed(2)} Total
                                               </div>
                                           )}
-                                          {e.currency !== 'CHF' && <div className="text-[9px] text-gray-400">~ {(displayAmount * e.rate).toFixed(2)} CHF</div>}
+                                          {/* Show Converted CHF Value Explicitly */}
+                                          {e.currency !== 'CHF' && (
+                                              <div className="text-[10px] font-bold text-blue-600 mt-0.5 whitespace-nowrap">
+                                                  = {(displayAmount * e.rate).toFixed(2)} CHF
+                                              </div>
+                                          )}
                                       </td>
                                       <td className="px-4 py-4 text-center align-top">
                                           {e.receiptId && (
@@ -847,10 +855,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               </div>
           </div>
 
-          {/* MOBILE LIST (VISIBLE ONLY ON MOBILE) - Compact Cards */}
+          {/* MOBILE LIST (VISIBLE ONLY ON MOBILE) */}
           <div className="md:hidden space-y-3">
               {filteredExpenses.map(e => {
-                  const { matchTotal, matchedItems, isHeaderMatch } = getMatchData(e);
+                  const { matchTotal } = getMatchData(e);
                   const displayAmount = searchTerm ? matchTotal : e.amount;
                   const highlightClass = searchTerm ? 'text-purple-600' : 'text-gray-800';
                   
@@ -871,6 +879,11 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                   <span className={`block font-black text-lg ${highlightClass}`}>
                                       {displayAmount.toFixed(2)} <span className="text-xs text-gray-400 font-bold">{e.currency}</span>
                                   </span>
+                                  {e.currency !== 'CHF' && (
+                                      <span className="block text-[10px] font-bold text-blue-600 mt-0.5">
+                                          = {(displayAmount * e.rate).toFixed(2)} CHF
+                                      </span>
+                                  )}
                                   {e.items && e.items.length > 0 && !searchTerm && (
                                       <button onClick={() => toggleItems(e.id)} className="text-[10px] text-blue-500 font-bold flex items-center justify-end gap-1 mt-1">
                                           {expandedRows[e.id] ? 'Verbergen' : `${e.items.length} Artikel`} <ChevronDown size={10} className={`transform transition-transform ${expandedRows[e.id] ? 'rotate-180' : ''}`} />
@@ -934,127 +947,59 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
       </div>
 
-      {/* ADD / EDIT MODAL - MOBILE OPTIMIZED (BOTTOM SHEET STABILITY) */}
+      {/* ADD / EDIT MODAL - MOBILE OPTIMIZED */}
       {(isAdding || editingId) && (
         <div 
             className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200"
-            style={{
-              zIndex: 9999,
-              /* Allow touch on backdrop but prevent body scroll bleed through */
-              touchAction: 'none'
-            }}
+            style={{ zIndex: 9999, touchAction: 'none' }}
         >
-            <div 
-                className="absolute inset-0 bg-transparent"
-                onClick={() => { setIsAdding(false); setEditingId(null); }}
-            />
-
-            <div 
-                className="bg-white mobile-modal-fix sm:w-auto sm:max-w-md sm:h-auto sm:max-h-[90vh] shadow-2xl relative z-10 animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200"
-                onClick={(e) => e.stopPropagation()}
-            >
+            <div className="absolute inset-0 bg-transparent" onClick={() => { setIsAdding(false); setEditingId(null); }} />
+            <div className="bg-white mobile-modal-fix sm:w-auto sm:max-w-md sm:h-auto sm:max-h-[90vh] shadow-2xl relative z-10 animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
                 <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 shrink-0">
                     <h3 className="font-black text-gray-800">{editingId ? 'Eintrag Bearbeiten' : 'Neue Ausgabe'}</h3>
-                    <button onClick={() => { setIsAdding(false); setEditingId(null); }} className="p-2 hover:bg-gray-200 rounded-full text-gray-400">
-                        <X size={20} />
-                    </button>
+                    <button onClick={() => { setIsAdding(false); setEditingId(null); }} className="p-2 hover:bg-gray-200 rounded-full text-gray-400"><X size={20} /></button>
                 </div>
-                
                 <div className="p-4 space-y-4 mobile-modal-scroll">
-                    {/* Date */}
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
-                        <input 
-                            type="date" 
-                            value={editingId ? (editForm.date || '') : (newExpense.date || '')}
-                            onChange={(e) => editingId ? setEditForm({...editForm, date: e.target.value}) : setNewExpense({...newExpense, date: e.target.value})}
-                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full"
-                        />
+                        <input type="date" value={editingId ? (editForm.date || '') : (newExpense.date || '')} onChange={(e) => editingId ? setEditForm({...editForm, date: e.target.value}) : setNewExpense({...newExpense, date: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full" />
                     </div>
-
-                    {/* Merchant */}
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Empfänger</label>
-                        <input 
-                            type="text" 
-                            placeholder="z.B. Coop, SBB..."
-                            value={editingId ? (editForm.merchant || '') : (newExpense.merchant || '')}
-                            onChange={(e) => editingId ? setEditForm({...editForm, merchant: e.target.value}) : setNewExpense({...newExpense, merchant: e.target.value})}
-                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full"
-                        />
+                        <input type="text" placeholder="z.B. Coop, SBB..." value={editingId ? (editForm.merchant || '') : (newExpense.merchant || '')} onChange={(e) => editingId ? setEditForm({...editForm, merchant: e.target.value}) : setNewExpense({...newExpense, merchant: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full" />
                     </div>
-
-                    {/* Amount & Currency */}
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
-                            <input 
-                                type="number" 
-                                placeholder="0.00"
-                                value={editingId ? (editForm.amount || '') : (newExpense.amount || '')}
-                                onChange={(e) => editingId ? setEditForm({...editForm, amount: parseFloat(e.target.value)}) : setNewExpense({...newExpense, amount: parseFloat(e.target.value)})}
-                                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-black outline-none focus:ring-2 focus:ring-blue-100 max-w-full"
-                            />
+                            <input type="number" placeholder="0.00" value={editingId ? (editForm.amount || '') : (newExpense.amount || '')} onChange={(e) => editingId ? setEditForm({...editForm, amount: parseFloat(e.target.value)}) : setNewExpense({...newExpense, amount: parseFloat(e.target.value)})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-black outline-none focus:ring-2 focus:ring-blue-100 max-w-full" />
                         </div>
                         <div className="space-y-1">
                             <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
-                            <select 
-                                value={editingId ? (editForm.currency || 'CHF') : (newExpense.currency || 'CHF')}
-                                onChange={(e) => editingId ? setEditForm({...editForm, currency: e.target.value}) : setNewExpense({...newExpense, currency: e.target.value})}
-                                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full"
-                            >
+                            <select value={editingId ? (editForm.currency || 'CHF') : (newExpense.currency || 'CHF')} onChange={(e) => editingId ? setEditForm({...editForm, currency: e.target.value}) : setNewExpense({...newExpense, currency: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full">
                                 <option value="CHF">CHF</option>
                                 <option value="EUR">EUR</option>
                                 <option value="USD">USD</option>
                             </select>
                         </div>
                     </div>
-
-                    {/* Category */}
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
                         <div className="grid grid-cols-2 gap-2">
                             {EXPENSE_CATEGORIES.map(cat => (
-                                <button
-                                    key={cat}
-                                    onClick={() => editingId ? setEditForm({...editForm, category: cat}) : setNewExpense({...newExpense, category: cat})}
-                                    className={`px-3 py-2 rounded-lg text-xs font-bold text-left transition-all border flex items-center gap-2 ${
-                                        (editingId ? editForm.category : newExpense.category) === cat 
-                                        ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
-                                        : 'bg-white border-gray-100 text-gray-500 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <CategoryIcon cat={cat} size={14}/>
-                                    {cat}
+                                <button key={cat} onClick={() => editingId ? setEditForm({...editForm, category: cat}) : setNewExpense({...newExpense, category: cat})} className={`px-3 py-2 rounded-lg text-xs font-bold text-left transition-all border flex items-center gap-2 ${(editingId ? editForm.category : newExpense.category) === cat ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-500 hover:bg-gray-50'}`}>
+                                    <CategoryIcon cat={cat} size={14}/> {cat}
                                 </button>
                             ))}
                         </div>
                     </div>
-                    
-                    {/* Items Field - ALWAYS VISIBLE */}
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Positionen / Artikel (Format: "Name: Preis")</label>
-                        <textarea
-                            value={editItemsText}
-                            onChange={(e) => setEditItemsText(e.target.value)}
-                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-mono outline-none focus:ring-2 focus:ring-blue-100 h-32 max-w-full"
-                            placeholder="Milch: 1.90&#10;Brot: 3.50&#10;Oder einfach Notizen..."
-                        />
+                        <textarea value={editItemsText} onChange={(e) => setEditItemsText(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-mono outline-none focus:ring-2 focus:ring-blue-100 h-32 max-w-full" placeholder="Milch: 1.90&#10;Brot: 3.50&#10;Oder einfach Notizen..." />
                     </div>
                 </div>
-
                 <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3 shrink-0 pb-safe w-full">
-                    <button 
-                        onClick={() => { setIsAdding(false); setEditingId(null); }}
-                        className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-200 rounded-xl transition-colors"
-                    >
-                        Abbrechen
-                    </button>
-                    <button 
-                        onClick={editingId ? saveEdit : addExpense}
-                        disabled={!editingId && (!newExpense.amount || !newExpense.merchant)}
-                        className={`flex-1 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-900/10 flex items-center justify-center gap-2 transition-all ${(!editingId && (!newExpense.amount || !newExpense.merchant)) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-800'}`}
-                    >
+                    <button onClick={() => { setIsAdding(false); setEditingId(null); }} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-200 rounded-xl transition-colors">Abbrechen</button>
+                    <button onClick={editingId ? saveEdit : addExpense} disabled={!editingId && (!newExpense.amount || !newExpense.merchant)} className={`flex-1 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-900/10 flex items-center justify-center gap-2 transition-all ${(!editingId && (!newExpense.amount || !newExpense.merchant)) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-800'}`}>
                         <Check size={18} /> Speichern
                     </button>
                 </div>
@@ -1062,52 +1007,58 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* RECEIPT VIEWER MODAL - FIXED MOBILE LAYOUT & CENTERED DESKTOP */}
+      {/* RECEIPT VIEWER MODAL - REDESIGNED */}
       {isConvertingReceipt && (
           <div 
-              className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none"
+              className="fixed inset-0 z-[100] flex items-center justify-center"
+              onClick={(e) => e.stopPropagation()}
           >
-              {/* Modal Container - NO BACKDROP */}
+              {/* Desktop Backdrop: Semi-transparent Black / Mobile: Full Black */}
               <div 
-                  className="
-                    relative 
-                    w-full h-full flex flex-col 
-                    bg-white
-                    pt-[env(safe-area-inset-top)] /* iOS Safe Area Fix */
-                    pointer-events-auto
-                    
-                    /* Desktop Styles: Centered Card */
-                    md:w-auto md:max-w-5xl md:h-auto md:max-h-[90vh] 
-                    md:rounded-2xl md:bg-white md:shadow-2xl md:border md:border-gray-200
-                    md:flex-col md:overflow-hidden
-                  "
-                  onClick={(e) => e.stopPropagation()} // Prevent closing when clicking content
-              >
-                  {/* Close Button Mobile - Moved down slightly */}
+                  className="absolute inset-0 bg-transparent cursor-pointer transition-colors"
+                  onClick={closeReceiptModal}
+              />
+
+              {/* Modal Container */}
+                            <div 
+                                    className="
+                                        relative 
+                                        w-full h-full flex flex-col 
+                                        bg-white
+                                        /* Mobile: Fullscreen with Safe Area Padding */
+                                        pt-[calc(env(safe-area-inset-top)+20px)]
+                                        /* Desktop: Centered Card */
+                                        md:w-auto md:max-w-5xl md:h-auto md:max-h-[85vh] 
+                                        md:rounded-3xl md:shadow-2xl md:border md:border-gray-200 md:pt-0
+                                        md:m-auto overflow-hidden
+                                    "
+                                    onClick={(e) => e.stopPropagation()}
+                            >
+                  {/* Close Button Mobile - Floating below safe area */}
                   <button 
                       onClick={closeReceiptModal} 
-                      className="absolute top-4 right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full transition-colors md:hidden"
+                      className="absolute top-[calc(env(safe-area-inset-top)+20px)] right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-full transition-colors md:hidden"
                   >
-                      <X size={20} />
+                      <X size={24} />
                   </button>
 
                   {/* Desktop Header */}
-                  <div className="hidden md:flex items-center justify-between p-4 border-b border-gray-200 bg-white shrink-0">
-                      <h3 className="text-gray-800 font-bold text-sm flex items-center gap-2">
-                          <FileText size={16} className="text-gray-400" />
+                  <div className="hidden md:flex items-center justify-between p-5 border-b border-gray-100 bg-white shrink-0">
+                      <h3 className="text-gray-800 font-black text-lg flex items-center gap-2">
+                          <FileText size={20} className="text-blue-600" />
                           Beleg Vorschau
                       </h3>
-                      <button onClick={closeReceiptModal} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
-                          <X size={20} />
+                      <button onClick={closeReceiptModal} className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-colors">
+                          <X size={24} />
                       </button>
                   </div>
 
-                  {/* Main Image Area - Flex Grow */}
-                  <div className="flex-1 min-h-0 w-full flex items-center justify-center p-4 relative overflow-hidden bg-gray-50 md:bg-white">
+                  {/* Main Image Area */}
+                  <div className="flex-1 min-h-0 w-full flex items-center justify-center p-0 md:p-8 relative bg-black md:bg-gray-100 overflow-hidden">
                       {!viewingReceiptSrc && !receiptError && (
                           <div className="flex flex-col items-center gap-4">
                               <Loader2 size={48} className="animate-spin text-gray-400" />
-                              <p className="text-gray-600 font-bold text-sm">{statusMessage || "Lade Beleg..."}</p>
+                              <p className="text-gray-500 font-bold text-sm">{statusMessage || "Lade Beleg..."}</p>
                           </div>
                       )}
                       
@@ -1115,31 +1066,21 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                           <img 
                               src={viewingReceiptSrc} 
                               alt="Beleg" 
-                              className="max-w-full max-h-full object-contain shadow-lg rounded-lg" 
+                              className="max-w-full max-h-full object-contain md:shadow-lg md:rounded-lg" 
                           />
                       )}
 
                       {receiptError && (
-                          <div className="p-6 bg-red-50 border border-red-200 rounded-2xl text-center max-w-sm">
-                              <p className="text-red-600 font-bold">{receiptError}</p>
+                          <div className="p-6 bg-red-900/80 border border-red-500/50 rounded-2xl text-center max-w-sm">
+                              <p className="text-red-200 font-bold">{receiptError}</p>
                           </div>
                       )}
                   </div>
 
-                  {/* Bottom Actions Bar - Fixed bottom on mobile, static on desktop */}
-                  <div className="w-full p-4 bg-gray-50 border-t border-gray-200 shrink-0 pb-10 md:pb-4 md:bg-white">
-                      {/* Actions */}
+                  {/* Footer Actions */}
+                  <div className="w-full p-6 pb-safe md:p-5 bg-white border-t border-gray-100 shrink-0">
                       {viewingReceiptSrc && (
                           <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
-                              {/* Desktop: Close Button in Footer too */}
-                              <button 
-                                  onClick={closeReceiptModal} 
-                                  className="hidden md:block px-6 py-3 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl font-bold text-xs transition-all"
-                              >
-                                  Schliessen
-                              </button>
-
-                              {/* Save Button */}
                               <a 
                                   href={viewingReceiptSrc} 
                                   download={`beleg_${new Date().toISOString()}.jpg`} 
@@ -1148,20 +1089,18 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                   <Save size={18}/> Sichern / Vorschau
                               </a>
                               
-                              {/* Share Button */}
                               {navigator.share && (
                                   <button 
                                       onClick={handleShare}
-                                      className="w-full md:w-auto px-8 py-4 md:py-3 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                                      className="w-full md:w-auto px-8 py-4 md:py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
                                   >
                                       <Share2 size={18} /> Teilen
                                   </button>
                               )}
 
-                              {/* Mobile Close Button (Big) */}
                               <button 
                                   onClick={closeReceiptModal} 
-                                  className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-all md:hidden"
+                                  className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm transition-all md:hidden"
                               >
                                   Schliessen
                               </button>
