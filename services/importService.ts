@@ -297,7 +297,9 @@ export class ImportService {
       };
 
       let posHeader: Record<string, number> = {};
-      let realHeader: Record<string, number> = {}; // Header for Realized Section
+      let realHeader: Record<string, number> = {}; 
+      let forexHeader: Record<string, number> = {}; // Header map for fallback exchange rates
+      let mtmHeader: Record<string, number> = {};   // Header map for MtM (another fallback)
       let inOpenPositions = false;
       
       // Scan rows
@@ -349,7 +351,6 @@ export class ImportService {
           }
 
           // 2. REALIZED PnL (Closed/Sold Positions)
-          // Look for section: "Übersicht zur realisierten und unrealisierten Performance"
           if (section.includes('realisierten') && section.includes('Performance')) {
               if (type === 'Header') {
                   row.forEach((col, idx) => {
@@ -359,19 +360,16 @@ export class ImportService {
                   const catIdx = realHeader['vermögenswertkategorie'];
                   const cat = row[catIdx];
                   
-                  // Filter for Stocks only
                   if (cat === 'Aktien' || cat === 'Stocks') {
                       const symIdx = realHeader['symbol'];
                       const sym = row[symIdx];
                       
-                      // Headers can be "Realisiert Gesamt" or "Realized Total"
                       let realTotalIdx = realHeader['realisiert gesamt'];
                       if (realTotalIdx === undefined) realTotalIdx = realHeader['realized total'];
                       
                       const realVal = this.parseNum(row[realTotalIdx]);
 
                       if (sym && realVal !== 0) {
-                          // Update if existing (Open), Create if new (Closed)
                           if (yearData.positions[sym]) {
                               yearData.positions[sym].real = realVal;
                           } else {
@@ -383,10 +381,9 @@ export class ImportService {
                                   val: 0,
                                   unReal: 0,
                                   real: realVal,
-                                  currency: 'USD' // Realized PnL in summary is usually Base Currency (USD)
+                                  currency: 'USD' 
                               };
                           }
-                          // Add to overall summary
                           yearData.summary.realized += realVal;
                       }
                   }
@@ -408,7 +405,7 @@ export class ImportService {
               }
           }
 
-          // 4. DIVIDENDS TOTAL (Dividenden)
+          // 4. DIVIDENDS TOTAL
           if (section === 'Dividenden' && type === 'Data') {
               const desc = row.join(' ');
               if (desc.includes('Gesamt Dividenden in USD')) {
@@ -421,7 +418,7 @@ export class ImportService {
               }
           }
 
-          // 5. TAX TOTAL (Quellensteuer)
+          // 5. TAX TOTAL
           if (section === 'Quellensteuer' && type === 'Data') {
               const desc = row.join(' ');
               if (desc.includes('Gesamt Quellensteuer in USD')) {
@@ -429,6 +426,75 @@ export class ImportService {
                       if (row[k] && !isNaN(parseFloat(row[k]))) {
                           yearData.summary.tax = Math.abs(this.parseNum(row[k]));
                           break;
+                      }
+                  }
+              }
+          }
+
+          // 6. EXCHANGE RATES (Direct Table)
+          if (section === 'Wechselkurse' || section === 'Exchange Rates') {
+              if (type === 'Data') {
+                  const fromCurr = row[2];
+                  const toCurr = row[3];
+                  const rate = this.parseNum(row[4]);
+
+                  if (fromCurr && toCurr && rate > 0) {
+                      yearData.exchangeRates[`${fromCurr}_${toCurr}`] = rate;
+                  }
+              }
+          }
+
+          // 7. FALLBACK: EXCHANGE RATES FROM "Devisenpositionen"
+          // If explicit table is missing, try to infer rates from Forex Positions
+          if (section === 'Devisenpositionen' || section === 'Forex Positions') {
+              if (type === 'Header') {
+                  row.forEach((col, idx) => forexHeader[col.toLowerCase()] = idx);
+              } else if (type === 'Data') {
+                  // Find indices dynamically
+                  let symIdx = forexHeader['beschreibung']; // Often Description is the Symbol e.g. CHF
+                  if (symIdx === undefined) symIdx = forexHeader['symbol'];
+                  if (symIdx === undefined) symIdx = forexHeader['description'];
+
+                  // Close price is usually "Schlusskurs"
+                  let closeIdx = forexHeader['schlusskurs'];
+                  if (closeIdx === undefined) closeIdx = forexHeader['close price'];
+
+                  if (symIdx !== undefined && closeIdx !== undefined) {
+                      const sym = row[symIdx]; // e.g. CHF
+                      const rate = this.parseNum(row[closeIdx]); // e.g. 1.3015 (Price of CHF in Base Currency USD)
+                      
+                      // Check if it's a valid currency code (3 letters) and not USD itself
+                      if (sym && sym.length === 3 && sym !== 'USD' && rate > 0) {
+                          // The report usually gives price of Foreign Currency in Base Currency (USD)
+                          // So 1 CHF = 1.3015 USD => Rate is CHF_USD
+                          yearData.exchangeRates[`${sym}_USD`] = rate;
+                          
+                          // Also store the inverse which app uses for display: USD_CHF = 1 / 1.3015
+                          yearData.exchangeRates[`USD_${sym}`] = 1 / rate;
+                      }
+                  }
+              }
+          }
+          
+          // 8. FALLBACK 2: EXCHANGE RATES FROM "Mark-to-Market"
+          // Sometimes "Devisenpositionen" is empty but MtM has it
+          if (section.startsWith('Mark-to-Market')) {
+              if (type === 'Header') {
+                  row.forEach((col, idx) => mtmHeader[col.toLowerCase()] = idx);
+              } else if (type === 'Data') {
+                  const catIdx = mtmHeader['vermögenswertkategorie'];
+                  const cat = row[catIdx];
+                  if (cat === 'Devisen' || cat === 'Forex') {
+                      const symIdx = mtmHeader['symbol'];
+                      const sym = row[symIdx];
+                      const closeIdx = mtmHeader['aktuell kurs']; // Current Price
+                      
+                      if (sym && sym.length === 3 && sym !== 'USD' && closeIdx !== undefined) {
+                          const rate = this.parseNum(row[closeIdx]);
+                          if (rate > 0) {
+                              yearData.exchangeRates[`${sym}_USD`] = rate;
+                              yearData.exchangeRates[`USD_${sym}`] = 1 / rate;
+                          }
                       }
                   }
               }

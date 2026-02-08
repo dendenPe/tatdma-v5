@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   Upload, 
@@ -132,14 +131,33 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       const text = event.target?.result as string;
       
       const newData = { ...data };
-      if (!newData.portfolios[data.currentPortfolioId].years[currentYear]) {
-          newData.portfolios[data.currentPortfolioId].years[currentYear] = { ...yearData };
+      const portfolio = newData.portfolios[data.currentPortfolioId];
+      
+      // Determine best starting rates:
+      // 1. Current rates if year exists
+      // 2. Previous year rates if new year
+      // 3. Default defaults
+      let baseRates: Record<string, number> = { 'USD_CHF': 0.88, 'EUR_CHF': 0.94, 'EUR_USD': 1.07 };
+      
+      if (portfolio.years[currentYear]) {
+          baseRates = { ...portfolio.years[currentYear].exchangeRates };
+      } else {
+          // Check for previous year
+          const prevYear = (parseInt(currentYear) - 1).toString();
+          if (portfolio.years[prevYear]) {
+              baseRates = { ...portfolio.years[prevYear].exchangeRates };
+          }
+      }
+
+      // Initialize year if missing
+      if (!portfolio.years[currentYear]) {
+          portfolio.years[currentYear] = { ...yearData, exchangeRates: baseRates };
       }
       
-      const targetYear = newData.portfolios[data.currentPortfolioId].years[currentYear];
+      const targetYear = portfolio.years[currentYear];
       
-      // RESTORED: Calling the fully implemented IBKR Parser
-      const parsedData = ImportService.parseIBKRPortfolioCSV(text, targetYear.exchangeRates);
+      // PARSE with fallback to baseRates
+      const parsedData = ImportService.parseIBKRPortfolioCSV(text, baseRates);
       
       targetYear.positions = parsedData.positions;
       targetYear.cash = parsedData.cash;
@@ -245,7 +263,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between group">
            <div>
               <h4 className="font-black text-gray-800 text-sm">{pos.symbol}</h4>
-              <span className="text-[10px] text-gray-400 font-bold uppercase">Realisierter PnL</span>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Realisierter PnL</span>
               {pos.qty !== 0 && <span className="ml-2 text-[9px] bg-blue-100 text-blue-600 px-1 rounded font-bold">Teilverkauf</span>}
            </div>
            <div className="flex items-center gap-3">
