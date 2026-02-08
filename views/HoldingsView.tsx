@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, 
   Briefcase, 
@@ -20,10 +21,13 @@ import {
   History,
   Trash2,
   DollarSign,
-  PieChart
+  PieChart,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { AppData, PortfolioYear, Portfolio } from '../types';
 import { ImportService } from '../services/importService';
+import { GeminiService } from '../services/geminiService';
 
 interface Props {
   data: AppData;
@@ -36,10 +40,13 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [showRates, setShowRates] = useState(false);
   const [newPortfolioName, setNewPortfolioName] = useState('');
   const [isAddingPortfolio, setIsAddingPortfolio] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   
   // Renaming State
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+
+  const smartImportRef = useRef<HTMLInputElement>(null);
 
   // Sync with global year when it changes
   useEffect(() => {
@@ -169,6 +176,51 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       alert(`Import erfolgreich!\n\n${Object.keys(parsedData.positions).length} Positionen.\nDividenden: ${parsedData.summary.dividends.toFixed(2)} USD\nTax: ${parsedData.summary.tax.toFixed(2)} USD`);
     };
     reader.readAsText(file);
+  };
+
+  const handleSmartImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      setIsScanning(true);
+      try {
+          const result = await GeminiService.analyzePortfolioCSV(file);
+          
+          if (result) {
+              const newData = { ...data };
+              const portfolio = newData.portfolios[data.currentPortfolioId];
+              
+              // Ensure year exists
+              if (!portfolio.years[currentYear]) {
+                  portfolio.years[currentYear] = { 
+                      positions: {}, 
+                      cash: {}, 
+                      summary: { totalValue: 0, unrealized: 0, realized: 0, dividends: 0, tax: 0 }, 
+                      lastUpdate: '', 
+                      exchangeRates: {} 
+                  };
+              }
+              
+              const targetYear = portfolio.years[currentYear];
+              
+              // Merge Logic: Overwrite with AI data
+              targetYear.positions = result.positions;
+              targetYear.cash = result.cash;
+              targetYear.summary = result.summary;
+              targetYear.exchangeRates = { ...targetYear.exchangeRates, ...result.exchangeRates }; // Merge rates
+              targetYear.lastUpdate = result.lastUpdate;
+
+              onUpdate(newData);
+              alert("Smart AI Import erfolgreich!\nDaten wurden aktualisiert.");
+          } else {
+              alert("Die KI konnte keine Portfolio-Daten extrahieren.");
+          }
+      } catch (err: any) {
+          alert("Fehler beim Smart Import: " + err.message);
+      } finally {
+          setIsScanning(false);
+          e.target.value = '';
+      }
   };
 
   const updateRate = (pair: string, val: number) => {
@@ -370,10 +422,24 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
             >
               <Globe size={16} /> FX Kurse
             </button>
+            
+            {/* STANDARD IMPORT */}
             <label className="bg-[#16325c] hover:bg-blue-900 text-white px-6 py-3 lg:px-8 lg:py-4 rounded-2xl font-black text-[10px] lg:text-xs uppercase tracking-widest flex items-center justify-center gap-3 cursor-pointer transition-all shadow-2xl shadow-blue-900/30">
               <Upload size={18} /> IBKR Import (.csv)
               <input type="file" className="hidden" accept=".csv" onChange={handleImport} />
             </label>
+
+            {/* SMART AI IMPORT */}
+            <button 
+                onClick={() => smartImportRef.current?.click()}
+                disabled={isScanning}
+                className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white px-6 py-3 lg:px-8 lg:py-4 rounded-2xl font-black text-[10px] lg:text-xs uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg hover:scale-105 active:scale-95"
+                title="KI-basierter Import für schwierige CSVs"
+            >
+                {isScanning ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />} 
+                Smart Import
+                <input type="file" ref={smartImportRef} className="hidden" accept=".csv,.txt" onChange={handleSmartImport} />
+            </button>
           </div>
         </div>
 

@@ -1,6 +1,7 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import * as pdfjsLib from 'pdfjs-dist';
-import { CATEGORY_STRUCTURE, EXPENSE_CATEGORIES } from "../types";
+import { CATEGORY_STRUCTURE, EXPENSE_CATEGORIES, PortfolioYear } from "../types";
 
 // Set Worker for PDF to Image conversion
 // @ts-ignore
@@ -70,6 +71,15 @@ export class GeminiService {
         resolve(base64);
       };
       reader.onerror = error => reject(error);
+    });
+  }
+
+  private static async fileToText(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = (e) => reject(e);
+        reader.readAsText(file);
     });
   }
 
@@ -320,5 +330,165 @@ export class GeminiService {
       console.error("Gemini Doc Analysis Error:", e);
       return null;
     }
+  }
+
+  // --- NEW: SMART IBKR PORTFOLIO IMPORT ---
+  static async analyzePortfolioCSV(file: File): Promise<PortfolioYear | null> {
+      try {
+          const apiKey = this.getApiKey();
+          if (!apiKey) throw new Error("API Key fehlt!");
+
+          const ai = new GoogleGenAI({ apiKey });
+          
+          // Read CSV as Text (Model works better with raw CSV text than image)
+          const csvText = await this.fileToText(file);
+          
+          // If CSV is enormous, we might need to truncate, but usually Activity Reports are fine for 2M token window.
+          // Let's pass it as text.
+
+          const schema = {
+              type: Type.OBJECT,
+              properties: {
+                  positions: {
+                      type: Type.ARRAY,
+                      items: {
+                          type: Type.OBJECT,
+                          properties: {
+                              symbol: { type: Type.STRING },
+                              qty: { type: Type.NUMBER },
+                              cost: { type: Type.NUMBER, description: "Cost Basis / Einstandskurs" },
+                              close: { type: Type.NUMBER, description: "Market Price / Schlusskurs" },
+                              val: { type: Type.NUMBER, description: "Market Value in Base Currency (usually USD)" },
+                              unReal: { type: Type.NUMBER, description: "Unrealized PnL" },
+                              real: { type: Type.NUMBER, description: "Realized PnL (from Performance section)" },
+                              currency: { type: Type.STRING }
+                          }
+                      }
+                  },
+                  cash: {
+                      type: Type.ARRAY,
+                      items: {
+                          type: Type.OBJECT,
+                          properties: {
+                              currency: { type: Type.STRING },
+                              amount: { type: Type.NUMBER, description: "Ending Settled Cash / Endbarsaldo" }
+                          }
+                      }
+                  },
+                  summary: {
+                      type: Type.OBJECT,
+                      properties: {
+                          totalValue: { type: Type.NUMBER, description: "Total Net Asset Value (Stocks only) in Base Currency" },
+                          unrealized: { type: Type.NUMBER, description: "Total Unrealized PnL" },
+                          realized: { type: Type.NUMBER, description: "Total Realized PnL from the period" },
+                          dividends: { type: Type.NUMBER, description: "Total Dividends" },
+                          tax: { type: Type.NUMBER, description: "Total Withholding Tax" }
+                      }
+                  },
+                  exchangeRates: {
+                      type: Type.ARRAY,
+                      items: {
+                          type: Type.OBJECT,
+                          properties: {
+                              pair: { type: Type.STRING, description: "Format: FROM_TO, e.g. USD_CHF" },
+                              rate: { type: Type.NUMBER }
+                          }
+                      },
+                      description: "Extract explicit exchange rates OR calculate them from 'Forex Positions' or 'Mark-to-Market' sections where you see a currency symbol and a close price in Base Currency."
+                  }
+              }
+          };
+
+          const prompt = `
+          Analyze this Interactive Brokers (IBKR) CSV Activity Statement.
+          Extract the Portfolio Snapshot data.
+          
+          CRITICAL FILTERING RULES:
+          - IGNORE all "Futures" positions and "Futures" PnL.
+          - IGNORE "Options" on Futures.
+          - ONLY extract "Stocks" (Aktien), "Funds" (Fonds), and "ETFs".
+          
+          Sections to look for:
+          1. "Open Positions" (Offene Positionen): Extract Stock/ETF positions (Symbol, Qty, Cost, Close, Value, Unrealized).
+          2. "Cash Report" (Cash-Bericht): Extract Ending Settled Cash for each currency.
+          3. "Realized & Unrealized Performance": Extract Realized PnL per symbol for STOCKS only. 
+             - If a symbol is a Future (e.g. ES, NQ, CL), SKIP IT.
+             - Do NOT include Futures PnL in the 'summary.realized' total.
+          4. "Dividends" / "Withholding Tax": Sum up totals.
+          5. "Exchange Rates" (Wechselkurse) OR "Forex Positions": 
+             - I need rates to convert to/from the Base Currency (usually USD).
+             - Return pairs like 'USD_CHF', 'EUR_USD'.
+          
+          Important:
+          - Ignore Header/Footer lines.
+          - 'real' PnL comes from the Realized Performance section.
+          - 'val' is the Market Value at the end of the period.
+          
+          CSV CONTENT:
+          ${csvText.substring(0, 100000)} 
+          `; // Limit context if needed, but 100k chars is usually fine for Flash model
+
+          const response = await ai.models.generateContent({
+              model: 'gemini-3-flash-preview',
+              contents: { parts: [{ text: prompt }] },
+              config: { responseMimeType: "application/json", responseSchema: schema }
+          });
+
+          if (!response.text) return null;
+          const aiJson = JSON.parse(response.text);
+
+          // Convert AI JSON to App Model (Record based)
+          const result: PortfolioYear = {
+              positions: {},
+              cash: {},
+              summary: {
+                  totalValue: aiJson.summary?.totalValue || 0,
+                  unrealized: aiJson.summary?.unrealized || 0,
+                  realized: aiJson.summary?.realized || 0,
+                  dividends: aiJson.summary?.dividends || 0,
+                  tax: aiJson.summary?.tax || 0
+              },
+              lastUpdate: new Date().toISOString(),
+              exchangeRates: {}
+          };
+
+          // Map Positions
+          if (aiJson.positions) {
+              aiJson.positions.forEach((p: any) => {
+                  if (p.symbol) {
+                      result.positions[p.symbol] = {
+                          symbol: p.symbol,
+                          qty: p.qty || 0,
+                          cost: p.cost || 0,
+                          close: p.close || 0,
+                          val: p.val || 0,
+                          unReal: p.unReal || 0,
+                          real: p.real || 0,
+                          currency: p.currency || 'USD'
+                      };
+                  }
+              });
+          }
+
+          // Map Cash
+          if (aiJson.cash) {
+              aiJson.cash.forEach((c: any) => {
+                  if (c.currency) result.cash[c.currency] = c.amount || 0;
+              });
+          }
+
+          // Map Rates
+          if (aiJson.exchangeRates) {
+              aiJson.exchangeRates.forEach((r: any) => {
+                  if (r.pair && r.rate) result.exchangeRates[r.pair] = r.rate;
+              });
+          }
+
+          return result;
+
+      } catch (e) {
+          console.error("Smart IBKR Import Failed", e);
+          throw e;
+      }
   }
 }
