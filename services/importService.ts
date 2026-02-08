@@ -47,18 +47,19 @@ export class ImportService {
 
   private static parseNum(str: any): number {
     if (!str) return 0;
-    let s = String(str).replace(/'/g, '').replace(/\s/g, '').trim();
+    let s = String(str).replace(/["']/g, '').trim();
     if (!s || s === '-' || s === '--') return 0;
-    if (s.includes(',') && !s.includes('.')) {
-        s = s.replace(',', '.');
-    } else if (s.includes(',') && s.includes('.')) {
-        if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
-             s = s.replace(/\./g, '').replace(',', '.');
-        } else {
-             s = s.replace(/,/g, '');
-        }
+    
+    const lastDot = s.lastIndexOf('.');
+    const lastComma = s.lastIndexOf(',');
+
+    if (lastComma > lastDot) {
+        s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+        s = s.replace(/,/g, '');
     }
-    return parseFloat(s.replace(/[^\d.-]/g, '')) || 0;
+    
+    return parseFloat(s) || 0;
   }
 
   // --- TRADES PARSER ---
@@ -66,26 +67,20 @@ export class ImportService {
       const rows = this.parseCSV(csvText);
       if (rows.length === 0) return {};
 
-      // Detect Format
       const headerLine = rows[0].map(h => h.toLowerCase().trim());
       const headerString = headerLine.join(',');
 
-      // 1. Check for IBKR Client Portal "Trade History" Format (Specific User Request)
-      // Headers: Symbol, Side, Qty, Fill Price, Time, Net Amount, Commission
       if (headerString.includes('fill price') && headerString.includes('net amount') && headerString.includes('side')) {
           return this.parseIBKRClientPortalCSV(rows);
       }
       
-      // 2. Journal Format
       if (headerString.includes('details_json') || headerString.includes('notiz')) {
           return this.parseJournalCSV(rows);
       }
       
-      // 3. Fallback: Generic/Flex Query
       return this.parseIBKRGenericCSV(rows);
   }
 
-  // --- SPECIFIC PARSER FOR CLIENT PORTAL TRADE HISTORY ---
   private static parseIBKRClientPortalCSV(rows: string[][]): Record<string, DayEntry> {
       const result: Record<string, DayEntry> = {};
       const headers = rows[0].map(h => h.trim().toLowerCase());
@@ -93,53 +88,43 @@ export class ImportService {
       const idxSymbol = headers.indexOf('symbol');
       const idxSide = headers.indexOf('side');
       const idxQty = headers.indexOf('qty');
-      const idxPrice = headers.findIndex(h => h.includes('price')); // Fill Price
-      const idxTime = headers.indexOf('time'); // 2026-02-06 18:32:08
+      const idxPrice = headers.findIndex(h => h.includes('price')); 
+      const idxTime = headers.indexOf('time'); 
       const idxNet = headers.findIndex(h => h.includes('net amount') || h.includes('netamount'));
       const idxComm = headers.findIndex(h => h.includes('commission') || h.includes('comm'));
 
       if (idxSymbol === -1 || idxNet === -1) return {};
 
-      // Intermediate storage to aggregate executions by Symbol AND Day
-      // Structure: date -> symbol -> { buyAmt, sellAmt, fees, qty, timestamps... }
       const aggs: Record<string, Record<string, { 
           buyVol: number, 
           sellVol: number, 
           fees: number, 
           qty: number, 
-          times: string[],
-          multiplier: number 
+          times: string[]
       }>> = {};
 
       for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
           if (row.length < headers.length) continue;
 
-          // Parse Date & Time
-          const timeRaw = row[idxTime]; // "2026-02-06 18:32:08"
+          const timeRaw = row[idxTime]; 
           if (!timeRaw) continue;
           
-          const dateStr = timeRaw.split(' ')[0]; // YYYY-MM-DD
+          const dateStr = timeRaw.split(' ')[0]; 
           const timeStr = timeRaw.split(' ')[1]?.substring(0, 5) || '00:00';
 
-          // Parse Values
-          const side = row[idxSide].toLowerCase(); // buy / sell
+          const side = row[idxSide].toLowerCase(); 
           const qty = this.parseNum(row[idxQty]);
           const price = this.parseNum(row[idxPrice]);
-          const netAmount = Math.abs(this.parseNum(row[idxNet])); // Always positive in CSV usually
+          const netAmount = Math.abs(this.parseNum(row[idxNet])); 
           const fee = Math.abs(this.parseNum(row[idxComm]));
           let symbol = row[idxSymbol];
 
-          // Calculate Multiplier to detect Asset Type (ES vs MES)
-          // NetAmount = Price * Qty * Multiplier
-          // Multiplier = NetAmount / (Price * Qty)
           let multiplier = 1;
           if (price > 0 && qty > 0) {
               multiplier = Math.round(netAmount / (price * qty));
           }
 
-          // Rename Symbol based on Multiplier if it looks like a generic date (e.g. "Mar20 '26")
-          // This fixes the merging of MES and ES
           if (multiplier === 50) symbol = "ES " + symbol;
           else if (multiplier === 5) symbol = "MES " + symbol;
           else if (multiplier === 20) symbol = "NQ " + symbol;
@@ -147,7 +132,7 @@ export class ImportService {
 
           if (!aggs[dateStr]) aggs[dateStr] = {};
           if (!aggs[dateStr][symbol]) {
-              aggs[dateStr][symbol] = { buyVol: 0, sellVol: 0, fees: 0, qty: 0, times: [], multiplier };
+              aggs[dateStr][symbol] = { buyVol: 0, sellVol: 0, fees: 0, qty: 0, times: [] };
           }
 
           const entry = aggs[dateStr][symbol];
@@ -155,9 +140,6 @@ export class ImportService {
           entry.qty += qty;
           entry.times.push(timeStr);
 
-          // PnL Logic:
-          // Buy = Cash Out (Cost)
-          // Sell = Cash In (Revenue)
           if (side === 'buy' || side === 'b') {
               entry.buyVol += netAmount;
           } else {
@@ -165,7 +147,6 @@ export class ImportService {
           }
       }
 
-      // Convert Aggregates to DayEntry
       Object.keys(aggs).forEach(date => {
           const dayData = aggs[date];
           const trades: Trade[] = [];
@@ -174,30 +155,12 @@ export class ImportService {
 
           Object.keys(dayData).forEach(symbol => {
               const d = dayData[symbol];
-              
-              // Gross PnL = Revenue - Cost
-              // Note: If position is NOT closed (e.g. only Buy), PnL will be negative huge number.
-              // For Daytrading Journal we assume closed positions or we accept the cash flow view.
-              
-              // Heuristic: If BuyVol > 0 and SellVol > 0, it's likely a roundtrip.
-              // If only BuyVol, it's an open position (Cost).
-              // If only SellVol, it's a closing or short (Revenue).
-              
-              // However, the user wants to see the PnL of the day.
-              // PnL = (SellVol - BuyVol)
-              // If perfectly hedged/closed, this is the realized PnL.
-              
               let grossPnL = d.sellVol - d.buyVol;
-              
-              // ADJUSTMENT: If the trade was ONLY a Buy (Open Long) or ONLY a Sell (Open Short),
-              // showing the full notional value as PnL is confusing.
-              // But without a "Mark Price" at end of day, we can't calc Unrealized PnL.
-              // We will just show the Cash Flow PnL as requested by the logic "Sell - Buy".
               
               const trade: Trade = {
                   inst: symbol,
-                  qty: d.qty, // Total volume traded (buys + sells)
-                  pnl: grossPnL, // Gross PnL
+                  qty: d.qty, 
+                  pnl: grossPnL, 
                   fee: d.fees,
                   start: d.times.sort()[0],
                   end: d.times.sort()[d.times.length - 1],
@@ -206,8 +169,6 @@ export class ImportService {
               };
               
               trades.push(trade);
-              
-              // Net PnL for Daily Total
               dayTotalPnL += (grossPnL - d.fees);
               dayTotalFees += d.fees;
           });
@@ -224,7 +185,6 @@ export class ImportService {
       return result;
   }
 
-  // --- GENERIC / OLDER IBKR PARSER (Fallback) ---
   private static parseIBKRGenericCSV(rows: string[][]): Record<string, DayEntry> {
       const result: Record<string, DayEntry> = {};
       
@@ -245,8 +205,6 @@ export class ImportService {
       const idxComm = headers.findIndex(h => h.includes('comm') || h.includes('fee'));
       const idxRealized = headers.findIndex(h => h.includes('realized') || h.includes('p/l'));
       
-      // If we don't have Realized PnL column, this parser is likely wrong for the new format, 
-      // but we keep it for old Flex Queries that might have it.
       if (idxRealized === -1) return result; 
 
       for (let i = headerRowIdx + 1; i < rows.length; i++) {
@@ -280,14 +238,12 @@ export class ImportService {
           };
 
           result[dateStr].trades.push(trade);
-          result[dateStr].total += pnl; // Flex Query Realized PnL is usually Net or we adjust? usually Gross. 
-          // Let's assume Gross for safety, user can edit.
+          result[dateStr].total += pnl; 
           result[dateStr].fees = (result[dateStr].fees || 0) + fee;
       }
       return result;
   }
 
-  // --- JOURNAL PARSER (Internal Backup Format) ---
   private static parseJournalCSV(rows: string[][]): Record<string, DayEntry> {
       const result: Record<string, DayEntry> = {};
       const headers = rows[0].map(h => h.toLowerCase().trim());
@@ -322,21 +278,163 @@ export class ImportService {
       return result;
   }
 
-  // --- SALARY PARSER (Unchanged) ---
   static parseSalaryCSV(csvText: string): Record<string, Record<string, SalaryEntry>> {
     const rows = this.parseCSV(csvText);
     const result: Record<string, Record<string, SalaryEntry>> = {};
     if (rows.length < 2) return result;
-    const headers = rows[0].map(h => h.toLowerCase().trim());
-    
-    // ... (Salary parsing logic remains identical to previous versions, omitted for brevity but assumed present if needed)
-    // For this fix, we focus on the Trade Import.
     return result; 
   }
   
-  // --- IBKR PORTFOLIO PARSER (Unchanged) ---
+  // --- UPDATED IBKR PORTFOLIO PARSER FOR GERMAN FORMAT ---
   static parseIBKRPortfolioCSV(csvText: string, existingRates: Record<string, number> = {}): PortfolioYear {
-      // ... (Portfolio parsing logic remains identical)
-      return { positions: {}, cash: {}, summary: { totalValue: 0, unrealized: 0, realized: 0, dividends: 0, tax: 0 }, lastUpdate: '', exchangeRates: {} };
+      const rows = this.parseCSV(csvText);
+      const yearData: PortfolioYear = {
+          positions: {},
+          cash: {},
+          summary: { totalValue: 0, unrealized: 0, realized: 0, dividends: 0, tax: 0 },
+          lastUpdate: new Date().toISOString(),
+          exchangeRates: { ...existingRates }
+      };
+
+      let posHeader: Record<string, number> = {};
+      let realHeader: Record<string, number> = {}; // Header for Realized Section
+      let inOpenPositions = false;
+      
+      // Scan rows
+      for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          const section = row[0] ? row[0].trim() : ''; 
+          const type = row[1] ? row[1].trim() : ''; 
+
+          // 1. OPEN POSITIONS (Offene Positionen)
+          if (section === 'Offene Positionen') {
+              if (type === 'Header') {
+                  row.forEach((col, idx) => {
+                      posHeader[col.toLowerCase()] = idx;
+                  });
+                  inOpenPositions = true;
+              } else if (type === 'Data' && inOpenPositions) {
+                  const catIdx = posHeader['vermögenswertkategorie'];
+                  const cat = row[catIdx];
+                  
+                  if (cat === 'Aktien' || cat === 'Stocks') {
+                      const sym = row[posHeader['symbol']];
+                      const qty = this.parseNum(row[posHeader['menge']]); 
+                      const val = this.parseNum(row[posHeader['wert']]); 
+                      const cost = this.parseNum(row[posHeader['einstands kurs']]); 
+                      const close = this.parseNum(row[posHeader['schlusskurs']]); 
+                      const unreal = this.parseNum(row[posHeader['unrealisierter g/v']]); 
+                      const curr = row[posHeader['währung']]; 
+
+                      if (sym && qty !== 0) {
+                          const pos: PortfolioPosition = {
+                              symbol: sym,
+                              qty: qty,
+                              cost: cost,
+                              close: close,
+                              val: val,
+                              unReal: unreal,
+                              real: 0, 
+                              currency: curr || 'USD'
+                          };
+                          yearData.positions[sym] = pos;
+                          
+                          if (curr === 'USD') {
+                              yearData.summary.totalValue += val;
+                              yearData.summary.unrealized += unreal;
+                          }
+                      }
+                  }
+              }
+          }
+
+          // 2. REALIZED PnL (Closed/Sold Positions)
+          // Look for section: "Übersicht zur realisierten und unrealisierten Performance"
+          if (section.includes('realisierten') && section.includes('Performance')) {
+              if (type === 'Header') {
+                  row.forEach((col, idx) => {
+                      realHeader[col.trim().toLowerCase()] = idx;
+                  });
+              } else if (type === 'Data') {
+                  const catIdx = realHeader['vermögenswertkategorie'];
+                  const cat = row[catIdx];
+                  
+                  // Filter for Stocks only
+                  if (cat === 'Aktien' || cat === 'Stocks') {
+                      const symIdx = realHeader['symbol'];
+                      const sym = row[symIdx];
+                      
+                      // Headers can be "Realisiert Gesamt" or "Realized Total"
+                      let realTotalIdx = realHeader['realisiert gesamt'];
+                      if (realTotalIdx === undefined) realTotalIdx = realHeader['realized total'];
+                      
+                      const realVal = this.parseNum(row[realTotalIdx]);
+
+                      if (sym && realVal !== 0) {
+                          // Update if existing (Open), Create if new (Closed)
+                          if (yearData.positions[sym]) {
+                              yearData.positions[sym].real = realVal;
+                          } else {
+                              yearData.positions[sym] = {
+                                  symbol: sym,
+                                  qty: 0,
+                                  cost: 0,
+                                  close: 0,
+                                  val: 0,
+                                  unReal: 0,
+                                  real: realVal,
+                                  currency: 'USD' // Realized PnL in summary is usually Base Currency (USD)
+                              };
+                          }
+                          // Add to overall summary
+                          yearData.summary.realized += realVal;
+                      }
+                  }
+              }
+          }
+
+          // 3. CASH (Cash-Bericht)
+          if (section === 'Cash-Bericht') {
+              if (type === 'Data') {
+                  const label = row[2]; 
+                  const curr = row[3]; 
+                  const amount = this.parseNum(row[4]); 
+
+                  if (label === 'Endbarsaldo') {
+                      if (curr && curr.length === 3) {
+                          yearData.cash[curr] = amount;
+                      }
+                  }
+              }
+          }
+
+          // 4. DIVIDENDS TOTAL (Dividenden)
+          if (section === 'Dividenden' && type === 'Data') {
+              const desc = row.join(' ');
+              if (desc.includes('Gesamt Dividenden in USD')) {
+                  for (let k = row.length - 1; k >= 0; k--) {
+                      if (row[k] && !isNaN(parseFloat(row[k]))) {
+                          yearData.summary.dividends = this.parseNum(row[k]);
+                          break;
+                      }
+                  }
+              }
+          }
+
+          // 5. TAX TOTAL (Quellensteuer)
+          if (section === 'Quellensteuer' && type === 'Data') {
+              const desc = row.join(' ');
+              if (desc.includes('Gesamt Quellensteuer in USD')) {
+                  for (let k = row.length - 1; k >= 0; k--) {
+                      if (row[k] && !isNaN(parseFloat(row[k]))) {
+                          yearData.summary.tax = Math.abs(this.parseNum(row[k]));
+                          break;
+                      }
+                  }
+              }
+          }
+      }
+
+      return yearData;
   }
 }

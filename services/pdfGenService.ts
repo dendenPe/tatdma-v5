@@ -461,8 +461,14 @@ export class PdfGenService {
                       body: tableBody,
                       theme: 'grid',
                       headStyles: { fillColor: [50, 50, 50] },
-                      columnStyles: { 4: { halign: 'right' } },
-                      styles: { fontSize: 9 }
+                      styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' }, // Smaller font, enable wrapping
+                      columnStyles: {
+                          0: { cellWidth: 30 }, // Kategorie
+                          1: { cellWidth: 50 }, // Beschreibung
+                          2: { cellWidth: 'auto' }, // Dateiname takes remainder
+                          3: { cellWidth: 15 }, // Typ
+                          4: { halign: 'right', cellWidth: 25, fontStyle: 'bold' } // Betrag
+                      }
                   });
                   
                   currentY = (doc as any).lastAutoTable.finalY + 20;

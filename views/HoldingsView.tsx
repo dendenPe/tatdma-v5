@@ -19,7 +19,9 @@ import {
   Check,
   ChevronDown,
   History,
-  Trash2
+  Trash2,
+  DollarSign,
+  PieChart
 } from 'lucide-react';
 import { AppData, PortfolioYear, Portfolio } from '../types';
 import { ImportService } from '../services/importService';
@@ -136,6 +138,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       
       const targetYear = newData.portfolios[data.currentPortfolioId].years[currentYear];
       
+      // RESTORED: Calling the fully implemented IBKR Parser
       const parsedData = ImportService.parseIBKRPortfolioCSV(text, targetYear.exchangeRates);
       
       targetYear.positions = parsedData.positions;
@@ -145,7 +148,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       targetYear.exchangeRates = parsedData.exchangeRates; 
       
       onUpdate(newData);
-      alert(`Import erfolgreich!\n\n${Object.keys(parsedData.positions).length} Positionen.\n${Object.keys(parsedData.cash).length} Währungen.\nRates: ${Object.keys(parsedData.exchangeRates).length}`);
+      alert(`Import erfolgreich!\n\n${Object.keys(parsedData.positions).length} Positionen.\nDividenden: ${parsedData.summary.dividends.toFixed(2)} USD\nTax: ${parsedData.summary.tax.toFixed(2)} USD`);
     };
     reader.readAsText(file);
   };
@@ -186,6 +189,10 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
   const currentYearNum = new Date().getFullYear();
   const availableYears = Array.from({ length: Math.max(2026 - 2023 + 1, currentYearNum - 2023 + 2) }, (_, i) => (2023 + i).toString());
+
+  // Dividenden Calc
+  const netDivUSD = (yearData.summary.dividends || 0) - (yearData.summary.tax || 0);
+  const netDivCHF = netDivUSD * usdToChf;
 
   // --- MOBILE CARD COMPONENTS ---
   const MobilePositionCard = ({ pos }: { pos: any }) => {
@@ -276,7 +283,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 lg:space-y-8 pb-32">
-      {/* Header Section - Stacked on Mobile */}
+      {/* Header Section */}
       <div className="bg-white rounded-[32px] shadow-sm border border-gray-100 p-6 lg:p-8 space-y-6 lg:space-y-8">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="flex items-center gap-4 lg:gap-6">
@@ -401,34 +408,71 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* Overview Cards - 2 Columns on Mobile */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-6">
-        <div className="bg-white p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-gray-100 shadow-sm space-y-1 lg:space-y-2 col-span-2 lg:col-span-1">
-           <span className="text-[9px] lg:text-[10px] font-black text-gray-400 uppercase tracking-widest">Marktwert (USD)</span>
-           <p className="text-xl lg:text-2xl font-black text-gray-800">{yearData.summary.totalValue.toLocaleString('de-CH', { minimumFractionDigits: 0 })}</p>
-           <div className="pt-2 mt-2 border-t border-gray-100">
-             <span className="text-[9px] lg:text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Total inkl. Cash</span>
-             <p className="text-lg lg:text-2xl font-black text-blue-600">{totalLiquidationValueUSD.toLocaleString('de-CH', { minimumFractionDigits: 0 })} <span className="text-[10px] lg:text-xs text-blue-300">USD</span></p>
+      {/* Overview Cards - FIXED DIVIDENDS CARD */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
+        {/* Marktwert */}
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
+           <div>
+               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Marktwert (USD)</span>
+               <p className="text-2xl font-black text-gray-800 mt-1">{yearData.summary.totalValue.toLocaleString('de-CH', { minimumFractionDigits: 0 })}</p>
+           </div>
+           <div className="pt-3 border-t border-gray-50">
+             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Total inkl. Cash</span>
+             <p className="text-xl font-black text-blue-600">{totalLiquidationValueUSD.toLocaleString('de-CH', { minimumFractionDigits: 0 })} <span className="text-xs text-blue-300">USD</span></p>
            </div>
         </div>
-        <div className="bg-white p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-gray-100 shadow-sm space-y-1 lg:space-y-2">
-           <span className="text-[9px] lg:text-[10px] font-black text-gray-400 uppercase tracking-widest">Realisiert</span>
-           <p className={`text-lg lg:text-2xl font-black ${yearData.summary.realized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {yearData.summary.realized >= 0 ? '+' : ''}{yearData.summary.realized.toLocaleString('de-CH', { minimumFractionDigits: 0 })}
-           </p>
-           <div className="text-[9px] lg:text-[10px] text-gray-300 font-bold uppercase">Abgeschlossen</div>
+
+        {/* Realisiert */}
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
+           <div>
+               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Realisiert</span>
+               <p className={`text-2xl font-black mt-1 ${yearData.summary.realized >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {yearData.summary.realized >= 0 ? '+' : ''}{yearData.summary.realized.toLocaleString('de-CH', { minimumFractionDigits: 0 })}
+               </p>
+           </div>
+           <div className="text-[10px] text-gray-300 font-bold uppercase pt-3 border-t border-gray-50">Abgeschlossen</div>
         </div>
-        <div className="bg-white p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-gray-100 shadow-sm space-y-1 lg:space-y-2">
-           <span className="text-[9px] lg:text-[10px] font-black text-gray-400 uppercase tracking-widest">Unrealisiert</span>
-           <p className={`text-lg lg:text-2xl font-black ${yearData.summary.unrealized >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {yearData.summary.unrealized >= 0 ? '+' : ''}{yearData.summary.unrealized.toLocaleString('de-CH', { minimumFractionDigits: 0 })}
-           </p>
-           <div className="text-[9px] lg:text-[10px] text-gray-300 font-bold uppercase">Laufend</div>
+
+        {/* Unrealisiert */}
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
+           <div>
+               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Unrealisiert</span>
+               <p className={`text-2xl font-black mt-1 ${yearData.summary.unrealized >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {yearData.summary.unrealized >= 0 ? '+' : ''}{yearData.summary.unrealized.toLocaleString('de-CH', { minimumFractionDigits: 0 })}
+               </p>
+           </div>
+           <div className="text-[10px] text-gray-300 font-bold uppercase pt-3 border-t border-gray-50">Laufend</div>
         </div>
-        <div className="bg-indigo-50 p-4 lg:p-6 rounded-2xl lg:rounded-3xl border border-indigo-100 shadow-sm space-y-1 lg:space-y-2 col-span-2 lg:col-span-1">
-           <span className="text-[9px] lg:text-[10px] font-black text-indigo-400 uppercase tracking-widest">Cash</span>
-           <p className="text-xl lg:text-2xl font-black text-indigo-600">{cashTotalUSD.toLocaleString('de-CH', { minimumFractionDigits: 0 })} <span className="text-xs">USD</span></p>
-           <div className="text-[9px] lg:text-[10px] text-indigo-300 font-bold uppercase">~ {cashTotalCHF.toLocaleString('de-CH', {maximumFractionDigits:0})} CHF</div>
+
+        {/* FIXED: Dividends & Tax Card - ALIGNED CORRECTLY */}
+        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
+           <div>
+               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                   Dividenden (Netto)
+               </span>
+               <p className="text-2xl font-black text-green-600 mt-1">
+                  {netDivUSD.toLocaleString('de-CH', { minimumFractionDigits: 2 })}
+               </p>
+           </div>
+           <div className="pt-3 border-t border-gray-50 grid grid-cols-2 gap-2">
+               <div>
+                   <span className="text-[9px] font-bold text-gray-400 uppercase block">Brutto</span>
+                   <span className="text-xs font-bold text-gray-600">{yearData.summary.dividends.toFixed(0)}</span>
+               </div>
+               <div className="text-right">
+                   <span className="text-[9px] font-bold text-gray-400 uppercase block">Quellensteuer</span>
+                   <span className="text-xs font-bold text-red-500">-{yearData.summary.tax.toFixed(0)}</span>
+               </div>
+           </div>
+        </div>
+
+        {/* Cash */}
+        <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100 shadow-sm flex flex-col justify-between h-full">
+           <div>
+               <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Cash</span>
+               <p className="text-2xl font-black text-indigo-600 mt-1">{cashTotalUSD.toLocaleString('de-CH', { minimumFractionDigits: 0 })} <span className="text-sm opacity-60">USD</span></p>
+           </div>
+           <div className="text-[10px] text-indigo-400 font-bold uppercase pt-3 border-t border-indigo-100">~ {cashTotalCHF.toLocaleString('de-CH', {maximumFractionDigits:0})} CHF</div>
         </div>
       </div>
 
