@@ -443,15 +443,21 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
             }
         }
 
-        /* Desktop Reset */
+        /* Desktop Reset: allow modal content to scroll vertically on larger screens */
         @media (min-width: 640px) {
             .mobile-modal-fix {
                 position: relative;
                 width: auto;
                 max-width: 28rem; /* sm:max-w-md */
                 touch-action: auto;
+                display: flex;
+                flex-direction: column;
+                max-height: 90vh; /* constrain modal height so inner area can scroll */
             }
             .mobile-modal-scroll {
+                overflow-y: auto;
+                overflow-x: hidden;
+                -webkit-overflow-scrolling: touch;
                 overscroll-behavior: auto;
             }
         }
