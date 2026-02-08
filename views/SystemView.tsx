@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Package, Download, Archive, RefreshCw, AlertCircle, CheckCircle, FolderOpen, Key } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Package, Download, Archive, RefreshCw, AlertCircle, CheckCircle, FolderOpen, Key, Share2, FileDown, Search, X } from 'lucide-react';
 import { AppData, APP_VERSION, DayEntry } from '../types';
 import { VaultService } from '../services/vaultService';
 import { BackupService } from '../services/backupService';
@@ -13,7 +13,17 @@ interface Props {
 const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [message, setMessage] = useState<{type: 'success'|'error', text: string} | null>(null);
+  const [message, setMessage] = useState<{type: 'success'|'error'|'info', text: string} | null>(null);
+  
+  // State für den Download Prozess
+  const [readyBackup, setReadyBackup] = useState<{blob: Blob, filename: string, url: string} | null>(null);
+  const [showIOSOverlay, setShowIOSOverlay] = useState(false);
+
+  useEffect(() => {
+      return () => {
+          if (readyBackup?.url) URL.revokeObjectURL(readyBackup.url);
+      };
+  }, [readyBackup]);
 
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
      const file = e.target.files?.[0];
@@ -38,25 +48,31 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
   const handleExportAll = async () => {
     setIsExporting(true);
     setMessage(null);
+    setReadyBackup(null);
+    setShowIOSOverlay(false);
+
     try {
       const blob = await BackupService.createBackupZip(data);
       const filename = `TaTDMA_Backup_${new Date().toISOString().split('T')[0]}.zip`;
 
       if (VaultService.isConnected()) {
-          // DIRECT VAULT SAVE
           await VaultService.writeFile(filename, blob);
-          setMessage({ type: 'success', text: `Backup "${filename}" (Version ${APP_VERSION}) im Vault gespeichert!` });
+          setMessage({ type: 'success', text: `Backup "${filename}" im Vault gespeichert!` });
       } else {
-          // BROWSER DOWNLOAD FALLBACK
+          // Generiere URL
           const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          setMessage({ type: 'success', text: `Backup ZIP (Version ${APP_VERSION}) erfolgreich erstellt!` });
+          setReadyBackup({ blob, filename, url });
+          
+          // Check Device Type
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+          
+          if (isIOS) {
+              // iOS: Zeige Overlay statt direktem Download
+              setShowIOSOverlay(true);
+          } else {
+              // Desktop/Android: Zeige Info Box
+              setMessage({ type: 'info', text: "Backup erstellt! Bitte unten Methode wählen." });
+          }
       }
     } catch (err: any) {
       console.error(err);
@@ -64,6 +80,35 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
     } finally {
       setIsExporting(false);
     }
+  };
+
+  const triggerManualShare = async () => {
+      if (!readyBackup) return;
+      const file = new File([readyBackup.blob], readyBackup.filename, { type: 'application/zip' });
+      
+      if (navigator.share) {
+          try {
+              await navigator.share({
+                  files: [file],
+                  title: 'TaTDMA Backup',
+                  text: `Backup vom ${new Date().toLocaleDateString()}`
+              });
+              setMessage({ type: 'success', text: "Erfolgreich." });
+          } catch (e: any) {
+              // Wenn Share fehlschlägt, Overlay öffnen als Fallback
+              if (e.name !== 'AbortError') {
+                  setShowIOSOverlay(true);
+              }
+          }
+      } else {
+          setShowIOSOverlay(true);
+      }
+  };
+
+  const closeOverlay = () => {
+      setShowIOSOverlay(false);
+      // Optional: Cleanup backup URL if user closes overlay
+      // setReadyBackup(null); 
   };
 
   const resetApiKey = () => {
@@ -74,12 +119,88 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8 pb-24">
       {message && (
-        <div className={`p-4 rounded-xl flex items-center gap-3 ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'} animate-in slide-in-from-top-2`}>
+        <div className={`p-4 rounded-xl flex items-center gap-3 ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : message.type === 'info' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-red-50 text-red-700 border border-red-200'} animate-in slide-in-from-top-2`}>
           {message.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
           <span className="font-bold text-sm">{message.text}</span>
         </div>
+      )}
+
+      {/* iOS SAFE DOWNLOAD OVERLAY */}
+      {showIOSOverlay && readyBackup && (
+          <div className="fixed inset-0 z-[9999] bg-gray-900/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative animate-in zoom-in-95 duration-200">
+                  <button onClick={closeOverlay} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200">
+                      <X size={20} />
+                  </button>
+                  
+                  <div className="flex flex-col items-center text-center space-y-6 pt-4">
+                      <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center shadow-inner">
+                          <Package size={40} />
+                      </div>
+                      
+                      <div>
+                          <h3 className="text-xl font-black text-gray-800">Backup bereit</h3>
+                          <p className="text-xs text-gray-400 mt-2 font-mono bg-gray-100 p-2 rounded-lg break-all">
+                              {readyBackup.filename}
+                          </p>
+                      </div>
+
+                      <div className="w-full space-y-3">
+                          {/* CRITICAL: A simple HTML link is the most robust way for iOS Safari to trigger the Download Manager without weird context switches */}
+                          <a 
+                              href={readyBackup.url}
+                              download={readyBackup.filename}
+                              className="w-full py-4 bg-blue-600 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-200 flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                              onClick={() => {
+                                  // Don't close immediately, give user time to see native prompt
+                                  setTimeout(() => setMessage({ type: 'success', text: "Download sollte gestartet sein. Prüfe 'Dateien' App." }), 1000);
+                              }}
+                          >
+                              <Download size={20} /> DATEI LADEN
+                          </a>
+                          
+                          <p className="text-[10px] text-gray-400 leading-relaxed px-2">
+                              <strong>Anleitung:</strong><br/>
+                              1. Klicke auf <strong>"DATEI LADEN"</strong>.<br/>
+                              2. Bestätige das Popup <strong>"Laden"</strong>.<br/>
+                              3. Klicke auf den blauen Pfeil <span className="inline-block bg-gray-200 rounded px-1 text-blue-600">↓</span> in der Adressleiste oder öffne die App <strong>"Dateien"</strong>.
+                          </p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* DESKTOP / FALLBACK CARD (Wenn Overlay nicht aktiv ist) */}
+      {readyBackup && !showIOSOverlay && (
+          <div className="bg-[#16325c] rounded-3xl p-6 shadow-xl shadow-blue-900/20 text-white animate-in zoom-in-95 border-2 border-white/10">
+              <div className="flex items-center gap-4 mb-6">
+                  <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm"><FileDown size={32}/></div>
+                  <div>
+                      <h4 className="text-xl font-black">Backup bereit!</h4>
+                      <p className="text-blue-200 text-xs mt-1 font-bold tracking-wide">Wähle eine Methode:</p>
+                  </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <button 
+                      onClick={triggerManualShare}
+                      className="w-full px-6 py-4 bg-white/10 border border-white/20 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:bg-white/20 transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
+                  >
+                      <Share2 size={18} /> Teilen (Mobil)
+                  </button>
+
+                  <a 
+                      href={readyBackup.url}
+                      download={readyBackup.filename}
+                      className="w-full px-6 py-4 bg-white text-[#16325c] border border-transparent rounded-xl font-black text-sm uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
+                  >
+                      <Download size={18} /> Download
+                  </a>
+              </div>
+          </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -128,7 +249,7 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
                className={`bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-4 rounded-xl text-center text-xs flex flex-col items-center justify-center gap-2 transition-all ${isExporting ? 'opacity-50 cursor-wait' : ''}`}
              >
                <Download size={18} /> 
-               {isExporting ? 'Sichere...' : 'ZIP Backup'}
+               {isExporting ? 'Erstelle...' : 'ZIP Erstellen'}
              </button>
           </div>
         </div>

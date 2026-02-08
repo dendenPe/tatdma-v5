@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Search, 
@@ -45,7 +46,11 @@ import {
   ChevronRight,
   BrainCircuit,
   StickyNote,
-  ShoppingBag
+  ShoppingBag,
+  Share2,
+  Printer,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { AppData, NoteDocument, DocCategory, TaxExpense, CATEGORY_STRUCTURE, ExpenseEntry } from '../types';
@@ -283,7 +288,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
     if (!pdf) return <div className="flex items-center justify-center h-48"><Loader2 className="animate-spin text-blue-500" /></div>;
 
     return (
-        <div ref={containerRef} className="w-full bg-gray-100 rounded-lg p-2 overflow-y-auto max-h-[calc(100vh-250px)] text-center">
+        <div ref={containerRef} className="w-full bg-gray-100 rounded-lg p-2 overflow-y-auto h-full text-center">
             {pages.map((page, idx) => (
                 <PdfPage key={idx} page={page} scale={scale} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
             ))}
@@ -315,6 +320,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   // File Preview State
   const [activeFileBlob, setActiveFileBlob] = useState<Blob | null>(null);
   const [isLensEnabled, setIsLensEnabled] = useState(false); // Zoom Lens Toggle
+  const [isMaximized, setIsMaximized] = useState(false); // FULLSCREEN TOGGLE
   
   // UI States for Feedback
   const [scanMessage, setScanMessage] = useState<{text: string, type: 'success'|'info'|'warning'} | null>(null);
@@ -435,18 +441,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   useEffect(() => {
       const loadBlob = async () => {
           setActiveFileBlob(null);
-          if (selectedNote && selectedNote.type === 'pdf') {
-              let blob = await DBService.getFile(selectedNote.id);
-              if (!blob && selectedNote.filePath && VaultService.isConnected()) {
-                  blob = await DocumentService.getFileFromVault(selectedNote.filePath);
-              }
-              if (blob) setActiveFileBlob(blob);
-          } else if (selectedNote && selectedNote.type === 'image') {
-              let blob = await DBService.getFile(selectedNote.id);
-              if (!blob && selectedNote.filePath && VaultService.isConnected()) {
-                  blob = await DocumentService.getFileFromVault(selectedNote.filePath);
-              }
-              if (blob) setActiveFileBlob(blob);
+          // On selection change, reset maximize
+          setIsMaximized(false);
+          
+          if (selectedNote) {
+              const blob = await ensureFileBlob();
+              // No need to set activeFileBlob again as ensureFileBlob does it
           }
       };
       loadBlob();
@@ -712,7 +712,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     setIsScanning(true);
     if (!isManual) setScanMessage({ text: "Synchronisiere Inbox...", type: 'info' });
 
-    // Use timeout to allow UI update before heavy processing
     setTimeout(async () => {
         try {
             const result = await DocumentService.scanInbox(data.notes || {}, data.categoryRules || {});
@@ -766,7 +765,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       setIsScanning(true);
       setScanMessage({ text: "Importiere Dateien...", type: 'info' });
 
-      // Timeout for UI update
       setTimeout(async () => {
           try {
               const newDocs = await DocumentService.processManualUpload(e.target.files!, data.categoryRules || {});
@@ -790,10 +788,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
               setTimeout(() => setScanMessage(null), 3000);
           }
       }, 50);
-      e.target.value = ''; // Reset input immediately
+      e.target.value = '';
   };
 
-  // NEW: HANDLE ZIP ARCHIVE IMPORT
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -831,7 +828,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   };
 
   const handleReindex = async () => {
-     if (!confirm("Vollständiger Re-Index?\n\nDas liest alle Dateien im _ARCHIVE Ordner neu ein. Dies ändert NICHTS an der Kategorie-Sortierung, sondern stellt nur die Datenbank wieder her.")) return;
+     if (!confirm("Vollständiger Re-Index?\n\nDas liest alle Dateien im _ARCHIVE Ordner neu ein.")) return;
      if (!VaultService.isConnected()) return;
      
      setIsReindexing(true);
@@ -863,7 +860,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
      }
   };
 
-  // --- NEW: AI CONTENT ANALYSIS (NO TAX IMPORT) ---
   const handleReanalyzeContent = async () => {
       if (!selectedNoteId || !selectedNote) return;
       
@@ -881,13 +877,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
           const file = new File([fileBlob], selectedNote.fileName || 'doc', { type: fileBlob.type });
           
-          // Use General Document Analysis
           const aiResult = await GeminiService.analyzeDocument(file);
           
           if (aiResult) {
               const year = aiResult.date ? aiResult.date.split('-')[0] : selectedNote.year;
               
-              // Prepare Payment Details Block
               let paymentTable = '';
               if (aiResult.paymentDetails && (aiResult.paymentDetails.recipientName || aiResult.paymentDetails.iban)) {
                   paymentTable = `
@@ -904,7 +898,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                   `;
               }
 
-              // Prepare smart summary block
               const aiBlock = `
               <div style="margin-top:20px; border-top:2px solid #e5e7eb; padding-top:15px;">
                   <h4 style="color:#4f46e5; font-weight:800; font-size:12px; text-transform:uppercase; display:flex; align-items:center; gap:5px;">
@@ -946,8 +939,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const toggleTaxImport = async () => {
      if (!selectedNoteId || !selectedNote) return;
-     
-     // REMOVE from Tax
      if (selectedNote.taxRelevant) {
          const newExpenses = data.tax.expenses.filter(e => e.noteRef !== selectedNote.id);
          updateSelectedNote({ taxRelevant: false });
@@ -959,23 +950,17 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          return;
      }
 
-     // ADD to Tax (Scan first)
      setIsAnalyzingTax(true);
      try {
-         // CHECK API KEY VIA LOCALSTORAGE
          const apiKey = localStorage.getItem('tatdma_api_key');
-         if (!apiKey) {
-             throw new Error("Kein API Key für AI Scan gefunden.");
-         }
+         if (!apiKey) throw new Error("Kein API Key für AI Scan gefunden.");
 
          let fileBlob = await DBService.getFile(selectedNote.id);
          if (!fileBlob && selectedNote.filePath && VaultService.isConnected()) {
              fileBlob = await DocumentService.getFileFromVault(selectedNote.filePath);
          }
 
-         if (!fileBlob) {
-             throw new Error("Originaldatei für Analyse nicht gefunden.");
-         }
+         if (!fileBlob) throw new Error("Originaldatei für Analyse nicht gefunden.");
 
          let amount = 0;
          let currency = 'CHF';
@@ -983,12 +968,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          let reasoning = '';
          
          const file = new File([fileBlob], selectedNote.fileName || 'beleg.pdf', { type: fileBlob.type });
-         
-         // Use Gemini
          const aiResult = await GeminiService.analyzeDocument(file);
          
          if (aiResult) {
-             // Update Note Content with AI Reasoning for Transparency
              if (aiResult.aiReasoning) {
                  const newContent = selectedNote.content + 
                      `<br/><br/><div style="border-top:1px solid #eee; padding-top:10px; font-size:10px; color:#666;">
@@ -1007,7 +989,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          }
 
          if (amount === 0) {
-             // Fallback Regex
              const amountMatch = stripHtml(selectedNote.content).match(/(\d+[.,]\d{2})/);
              if (amountMatch) amount = parseFloat(amountMatch[1].replace(',', '.'));
              if (selectedNote.category.includes('Beruf') || selectedNote.category.includes('Arbeit')) category = 'Berufsauslagen';
@@ -1033,10 +1014,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
          onUpdate({
              ...data,
-             notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: true, content: selectedNote.content } }, // content updated above via updateSelectedNote might not be sync yet
+             notes: { ...data.notes, [selectedNoteId]: { ...selectedNote, taxRelevant: true, content: selectedNote.content } }, 
              tax: { ...data.tax, expenses: [...data.tax.expenses, newExpense] }
          });
-         
          alert(`Importiert: ${amount} ${currency}\nKat: ${category}\n\nAI Info: ${reasoning || 'n/a'}`);
 
      } catch (e: any) {
@@ -1049,8 +1029,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   const createNote = () => {
     const id = `note_${Date.now()}`;
     const year = new Date().getFullYear().toString();
-    // Default to 'Sonstiges' if viewing All or Inbox, otherwise use current selection
-    // We avoid creating manual notes in 'Inbox' usually, but user can move it later.
     let initialCat = selectedCat;
     if (initialCat === 'All' || initialCat === 'Inbox') {
         initialCat = 'Sonstiges';
@@ -1072,7 +1050,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
     onUpdate({ ...data, notes: { ...data.notes, [id]: newNote } });
     setSelectedNoteId(id);
     
-    // Switch category view if needed so the new note is visible
     if (selectedCat !== 'All' && selectedCat !== initialCat) {
         setSelectedCat(initialCat);
     }
@@ -1080,7 +1057,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const changeCategory = async (newCat: DocCategory, newSubCat?: string) => {
       if (!selectedNoteId || !selectedNote) return;
-      // If nothing changed, do nothing
       if (selectedNote.category === newCat && selectedNote.subCategory === newSubCat) return;
 
       setIsCreatingCat(false);
@@ -1104,25 +1080,126 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
-  const openFile = async () => {
-      if (!selectedNote) return;
-      if (selectedNote.filePath && VaultService.isConnected()) {
-          const blob = await DocumentService.getFileFromVault(selectedNote.filePath);
-          if (blob) {
-              const url = URL.createObjectURL(blob);
-              window.open(url, '_blank');
-              return;
-          }
-      }
+  // --- ROBUST FILE HANDLING (FIXED: Force correct MIME Types) ---
+  const ensureFileBlob = async (): Promise<Blob | null> => {
+      if (!selectedNote) return null;
+      if (activeFileBlob) return activeFileBlob; 
+
+      let blob: Blob | null = null;
       try {
-          const blob = await DBService.getFile(selectedNote.id);
-          if (blob) {
-             const url = URL.createObjectURL(blob);
-             window.open(url, '_blank');
-             return;
+          blob = await DBService.getFile(selectedNote.id);
+      } catch (e) { /* ignore */ }
+
+      if (!blob && selectedNote.filePath && VaultService.isConnected()) {
+          blob = await DocumentService.getFileFromVault(selectedNote.filePath);
+      }
+      
+      // CRITICAL FIX: FORCE CORRECT MIME TYPE
+      if (blob) {
+          let type = blob.type;
+          
+          if (selectedNote.type === 'pdf') type = 'application/pdf';
+          else if (selectedNote.type === 'image') type = 'image/jpeg';
+          
+          // If type is missing or generic, enforce it based on metadata
+          if (!type || type === 'application/octet-stream') {
+             if (selectedNote.fileName?.toLowerCase().endsWith('.pdf')) type = 'application/pdf';
+             else if (selectedNote.fileName?.toLowerCase().match(/\.(jpg|jpeg|png)$/)) type = 'image/jpeg';
           }
-      } catch (e) { console.error(e); }
-      alert("Datei nicht gefunden.");
+
+          if (blob.type !== type) {
+              console.log(`Fixing Blob Type: ${blob.type} -> ${type}`);
+              blob = new Blob([blob], { type });
+          }
+          setActiveFileBlob(blob);
+      }
+      return blob;
+  };
+
+  const openFile = async () => {
+      const blob = await ensureFileBlob();
+      if (blob) {
+          const url = URL.createObjectURL(blob);
+          window.open(url, '_blank');
+      } else {
+          alert("Datei konnte nicht geladen werden (nicht in DB oder Vault gefunden).");
+      }
+  };
+
+  // --- SHARE FUNCTIONALITY (ROBUST FALLBACK) ---
+  const handleShare = async () => {
+      if (!selectedNote) return;
+      const blob = await ensureFileBlob();
+      if (!blob) return alert("Datei nicht bereit zum Teilen.");
+
+      let fileName = selectedNote.fileName || (selectedNote.type === 'pdf' ? 'dokument.pdf' : 'bild.jpg');
+      if (blob.type === 'application/pdf' && !fileName.toLowerCase().endsWith('.pdf')) fileName += '.pdf';
+      if (blob.type === 'image/jpeg' && !fileName.toLowerCase().endsWith('.jpg')) fileName += '.jpg';
+      
+      const file = new File([blob], fileName, { type: blob.type });
+      
+      // 1. Try Native Share (Mobile & Supported Desktop)
+      // We rely on feature detection instead of user agent to be robust
+      if (navigator.share) {
+          try {
+              await navigator.share({
+                  files: [file],
+                  title: selectedNote.title,
+                  text: 'Dokument aus TaTDMA'
+              });
+              return; // Success, stop here.
+          } catch (shareError: any) {
+              // Ignore abort errors (user cancelled share sheet)
+              if (shareError.name !== 'AbortError') {
+                  console.warn("Share failed, falling back to open", shareError);
+              } else {
+                  return; // User cancelled, do nothing
+              }
+          }
+      } 
+      
+      // 2. Desktop / Fallback Behavior: Open in New Tab
+      // User explicitly requested to STOP automatic downloading.
+      // Opening in a new tab allows printing, saving, and copying URL.
+      const url = URL.createObjectURL(blob);
+      const newWindow = window.open(url, '_blank');
+      
+      // If popup blocker blocked it
+      if (!newWindow) {
+          alert("Bitte Popups erlauben, um das Dokument zu öffnen.");
+      }
+      
+      // Clean up URL after a delay
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  // --- DOWNLOAD FUNCTIONALITY (Corrected) ---
+  const handleDownload = async () => {
+      const blob = await ensureFileBlob();
+      if (!blob) return alert("Datei nicht verfügbar.");
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = selectedNote?.fileName || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
+  // --- PRINT FUNCTIONALITY (Corrected) ---
+  const handlePrint = async () => {
+      const blob = await ensureFileBlob();
+      if (!blob) return alert("Datei nicht verfügbar.");
+      const url = URL.createObjectURL(blob);
+      
+      // Open in new tab - browser handles PDF printing best
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000); 
   };
 
   const addKeyword = () => {
@@ -1154,17 +1231,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
-  const getTypeLabel = (type: NoteDocument['type']) => {
-      switch(type) {
-          case 'pdf': return 'PDF Doku';
-          case 'image': return 'Bild / Scan';
-          case 'word': return 'Word / Pages';
-          case 'excel': return 'Excel / CSV';
-          case 'note': return 'Notiz';
-          default: return 'Datei';
-      }
-  };
-
   const getCategoryColor = (cat: string) => {
       if (cat === 'Inbox') return 'bg-purple-50 text-purple-600 border border-purple-100';
       if (cat.includes('Steuern')) return 'bg-red-50 text-red-600 border border-red-100';
@@ -1183,14 +1249,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const toggleExpenseImport = () => {
       if (!selectedNoteId || !selectedNote) return;
-      
       if (selectedNote.isExpense) {
           updateSelectedNote({ isExpense: false });
           return;
       }
 
       const expenseId = `expense_${Date.now()}`;
-      // Create expense entry
       const year = selectedNote.year || new Date().getFullYear().toString();
       const currentExpenses = data.dailyExpenses?.[year] || [];
       
@@ -1253,31 +1317,13 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                     
-                    {/* ZIP Import Mobile */}
-                    <button 
-                        onClick={() => zipImportInputRef.current?.click()} 
-                        className="p-2 bg-purple-100 text-purple-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
-                        title="ZIP Archiv importieren"
-                    >
-                        <FileArchive size={20} />
-                    </button>
+                    <button onClick={() => zipImportInputRef.current?.click()} className="p-2 bg-purple-100 text-purple-600 rounded-lg shadow-sm shrink-0"><FileArchive size={20} /></button>
                     <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
 
-                    <button 
-                        onClick={() => mobileImportInputRef.current?.click()} 
-                        className="p-2 bg-[#16325c] text-white rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
-                        title="Dateien importieren"
-                    >
-                        <UploadCloud size={20} />
-                    </button>
+                    <button onClick={() => mobileImportInputRef.current?.click()} className="p-2 bg-[#16325c] text-white rounded-lg shadow-sm shrink-0"><UploadCloud size={20} /></button>
                     <input type="file" ref={mobileImportInputRef} multiple className="hidden" onChange={handleMobileImport} />
 
-                    <button 
-                        onClick={createNote} 
-                        className="p-2 bg-blue-100 text-blue-600 rounded-lg shadow-sm active:scale-95 transition-transform shrink-0"
-                    >
-                        <PenTool size={20} />
-                    </button>
+                    <button onClick={createNote} className="p-2 bg-blue-100 text-blue-600 rounded-lg shadow-sm shrink-0"><PenTool size={20} /></button>
                 </>
             )}
          </div>
@@ -1301,73 +1347,41 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 <div className="flex items-center gap-2"><Inbox size={16}/> Alle Notizen</div>
                 <span className="bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded text-[10px]">{notesList.length}</span>
             </button>
-            
             <div className="pt-4 pb-2 px-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategorien</div>
-            
-            {/* Special Inbox Button */}
             <div className="group flex items-center gap-1 w-full px-1">
                 <button 
                     onClick={() => { setSelectedCat('Inbox'); setSelectedSubCat(null); }}
                     className={`flex-1 flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === 'Inbox' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
                 >
-                    <div className="flex items-center gap-2">
-                        <Inbox size={16} className="text-purple-500"/>
-                        Inbox
-                    </div>
+                    <div className="flex items-center gap-2"><Inbox size={16} className="text-purple-500"/>Inbox</div>
                     <span className="text-[10px] text-gray-300">{notesList.filter(n => n.category === 'Inbox').length}</span>
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); setRuleModalCat('Inbox'); }} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Tag size={12} /></button>
             </div>
-
-            {/* Dynamic Categories with Sub-Categories (Accordion) */}
             {CATEGORY_KEYS.filter(c => c !== 'Inbox').map(catName => {
                 const subCats = CATEGORY_STRUCTURE[catName];
                 const isExpanded = expandedCats[catName];
                 const docCount = notesList.filter(n => n.category === catName).length;
-
                 return (
                 <div key={catName} className="w-full px-1">
                     <div className="group relative flex items-center gap-1">
                          {subCats.length > 0 && (
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); toggleCatExpanded(catName); }}
-                                className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg transition-colors absolute left-1 z-10"
-                            >
+                            <button onClick={(e) => { e.stopPropagation(); toggleCatExpanded(catName); }} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg transition-colors absolute left-1 z-10">
                                 {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             </button>
                          )}
-
-                        <button 
-                            onClick={() => { 
-                                setSelectedCat(catName); 
-                                setSelectedSubCat(null);
-                                if (!isExpanded) toggleCatExpanded(catName);
-                            }}
-                            className={`flex-1 flex items-center justify-between pl-8 pr-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === catName ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-                        >
-                            <div className="flex items-center gap-2 truncate">
-                                <FolderOpen size={16} className="text-amber-500 shrink-0"/>
-                                <span className="truncate">{catName}</span>
-                            </div>
+                        <button onClick={() => { setSelectedCat(catName); setSelectedSubCat(null); if (!isExpanded) toggleCatExpanded(catName); }} className={`flex-1 flex items-center justify-between pl-8 pr-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedCat === catName ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
+                            <div className="flex items-center gap-2 truncate"><FolderOpen size={16} className="text-amber-500 shrink-0"/><span className="truncate">{catName}</span></div>
                             <span className="text-[10px] text-gray-300 shrink-0">{docCount}</span>
                         </button>
-                        
                         <button onClick={(e) => { e.stopPropagation(); setRuleModalCat(catName); }} className="p-2 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Tag size={12} /></button>
                     </div>
-
-                    {/* Sub Categories */}
                     {isExpanded && subCats.length > 0 && (
                         <div className="pl-9 pr-2 space-y-0.5 mt-0.5 mb-1 animate-in slide-in-from-top-1 fade-in duration-200">
                             {subCats.map(sub => {
                                 const subCount = notesList.filter(n => n.category === catName && n.subCategory === sub).length;
                                 return (
-                                    <button 
-                                        key={sub}
-                                        onClick={() => { setSelectedCat(catName); setSelectedSubCat(sub); }}
-                                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition-colors ${selectedCat === catName && selectedSubCat === sub ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
-                                    >
-                                        <span className="truncate">{sub}</span>
-                                        {subCount > 0 && <span className="text-[9px] opacity-60">{subCount}</span>}
+                                    <button key={sub} onClick={() => { setSelectedCat(catName); setSelectedSubCat(sub); }} className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition-colors ${selectedCat === catName && selectedSubCat === sub ? 'bg-blue-50 text-blue-700 font-bold' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}>
+                                        <span className="truncate">{sub}</span>{subCount > 0 && <span className="text-[9px] opacity-60">{subCount}</span>}
                                     </button>
                                 );
                             })}
@@ -1377,67 +1391,29 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 );
             })}
          </div>
-
-         {/* Desktop Vault/Scan Footer */}
+         {/* Footer */}
          <div className="hidden md:block p-4 border-t border-gray-100 bg-gray-50 space-y-2 relative">
-            {scanMessage && (
-                <div className={`absolute bottom-full left-4 right-4 mb-2 p-3 text-xs font-bold rounded-xl shadow-lg flex items-center gap-2 z-20 ${scanMessage.type === 'warning' ? 'bg-orange-100 text-orange-700' : scanMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-600 text-white'}`}>
-                    {scanMessage.text}
-                </div>
-            )}
-            
-            {/* Desktop ZIP Import Button */}
-             <button onClick={() => zipImportInputRef.current?.click()} disabled={isScanning} className="w-full py-2.5 border border-purple-200 bg-purple-50 text-purple-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-purple-100 transition-all">
-                <FileArchive size={14} /> ZIP Archiv Import
-            </button>
+            <button onClick={() => zipImportInputRef.current?.click()} disabled={isScanning} className="w-full py-2.5 border border-purple-200 bg-purple-50 text-purple-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-purple-100 transition-all"><FileArchive size={14} /> ZIP Archiv Import</button>
             <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
-
-            <button onClick={() => handleScanInbox(true)} disabled={isScanning} className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}>
-                {isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />} Inbox Scannen
-            </button>
-            
-            <button 
-                onClick={handleReindex} 
-                disabled={isReindexing} 
-                className={`w-full py-2.5 border border-blue-200 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-100 transition-all ${isReindexing ? 'opacity-50 cursor-wait' : ''}`}
-                title="Liest bestehende Ordnerstruktur neu ein (kein AI-Scan)"
-            >
-                {isReindexing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Archive Sync
-            </button>
+            <button onClick={() => handleScanInbox(true)} disabled={isScanning} className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}>{isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />} Inbox Scannen</button>
+            <button onClick={handleReindex} disabled={isReindexing} className={`w-full py-2.5 border border-blue-200 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-100 transition-all ${isReindexing ? 'opacity-50 cursor-wait' : ''}`} title="Liest bestehende Ordnerstruktur neu ein (kein AI-Scan)">{isReindexing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Archive Sync</button>
          </div>
       </div>
 
-      {/* Resizer Sidebar -> List */}
-      <div 
-        className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10"
-        onMouseDown={startResizing('sidebar')}
-      />
+      {/* Resizer */}
+      <div className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10" onMouseDown={startResizing('sidebar')}/>
 
       {/* 2. NOTE LIST */}
-      <div 
-        className={`border-r border-gray-100 flex flex-col min-h-0 bg-white shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`}
-        style={{ width: window.innerWidth >= 768 ? layout.listW : '100%' }}
-      >
+      <div className={`border-r border-gray-100 flex flex-col min-h-0 bg-white shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`} style={{ width: window.innerWidth >= 768 ? layout.listW : '100%' }}>
          <div className="p-4 border-b border-gray-50 shrink-0 space-y-2">
             <div className="relative">
                 <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                 <input type="text" placeholder="Suchen..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-50 transition-all"/>
             </div>
-            {/* Active Filter Chips */}
             {(selectedCat !== 'All' || selectedSubCat) && (
                 <div className="flex gap-2 flex-wrap">
-                    {selectedCat !== 'All' && (
-                        <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-[10px] font-bold">
-                            <span>{selectedCat}</span>
-                            <button onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }} className="hover:text-red-500"><X size={10}/></button>
-                        </div>
-                    )}
-                    {selectedSubCat && (
-                        <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-md text-[10px] font-bold">
-                            <span>{selectedSubCat}</span>
-                            <button onClick={() => setSelectedSubCat(null)} className="hover:text-red-500"><X size={10}/></button>
-                        </div>
-                    )}
+                    {selectedCat !== 'All' && (<div className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 rounded-md text-[10px] font-bold"><span>{selectedCat}</span><button onClick={() => { setSelectedCat('All'); setSelectedSubCat(null); }} className="hover:text-red-500"><X size={10}/></button></div>)}
+                    {selectedSubCat && (<div className="flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-md text-[10px] font-bold"><span>{selectedSubCat}</span><button onClick={() => setSelectedSubCat(null)} className="hover:text-red-500"><X size={10}/></button></div>)}
                 </div>
             )}
          </div>
@@ -1446,29 +1422,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 <div key={note.id} onClick={() => setSelectedNoteId(note.id)} className={`p-4 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedNoteId === note.id ? 'bg-blue-50/50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}>
                     <div className="flex items-start justify-between mb-1">
                         <h4 className={`font-bold text-sm truncate flex-1 ${selectedNoteId === note.id ? 'text-blue-700' : 'text-gray-800'}`}>{note.title}</h4>
-                        <div className="flex items-center gap-1">
-                            {note.taxRelevant && (
-                                <span title="In Steuer importiert">
-                                    <Receipt size={14} className="text-blue-500" />
-                                </span>
-                            )}
-                            {getIconForType(note.type)}
-                        </div>
+                        <div className="flex items-center gap-1">{note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}{getIconForType(note.type)}</div>
                     </div>
-                    <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">
-                        {renderNotePreview(note.content, searchQuery)}
-                    </div>
+                    <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">{renderNotePreview(note.content, searchQuery)}</div>
                     <div className="flex items-center justify-between mt-2">
-                        <div className="flex gap-2 flex-wrap">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getCategoryColor(note.category)}`}>
-                                {note.category}
-                            </span>
-                            {note.subCategory && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600 border border-gray-200">
-                                    {note.subCategory}
-                                </span>
-                            )}
-                        </div>
+                        <div className="flex gap-2 flex-wrap"><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getCategoryColor(note.category)}`}>{note.category}</span>{note.subCategory && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-600 border border-gray-200">{note.subCategory}</span>}</div>
                         <span className="text-[10px] text-gray-300">{new Date(note.created).toLocaleDateString()}</span>
                     </div>
                 </div>
@@ -1477,145 +1435,62 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          </div>
       </div>
 
-      {/* Resizer List -> Detail */}
-      <div 
-        className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10"
-        onMouseDown={startResizing('list')}
-      />
+      <div className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10" onMouseDown={startResizing('list')}/>
 
-      {/* 3. DETAIL / EDITOR - Mobile Overlay or Desktop Column */}
+      {/* 3. DETAIL / EDITOR */}
       <div className={`flex-1 flex flex-col bg-gray-50/30 ${selectedNoteId ? 'fixed inset-0 z-[100] bg-white md:static h-[100dvh]' : 'hidden md:flex'}`}>
          {selectedNote ? (
              <>
-                <div className="px-4 pb-3 border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 pt-[calc(env(safe-area-inset-top)+1.5rem)] gap-y-2">
+                <div className="px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))] border-b border-gray-100 bg-white flex flex-wrap items-center justify-between shrink-0 gap-y-2">
                     <div className="flex items-center gap-3 flex-1 mr-2 overflow-hidden min-w-[200px]">
-                        {/* Mobile Back Button */}
-                        <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 mt-1 text-gray-500 hover:bg-gray-100 rounded-full shrink-0">
-                           <ArrowLeft size={20} />
-                        </button>
-                        
+                        <button onClick={() => setSelectedNoteId(null)} className="md:hidden p-2 -ml-2 text-gray-500 hover:bg-gray-100 rounded-full shrink-0"><ArrowLeft size={20} /></button>
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                                <input 
-                                    type="text" 
-                                    value={selectedNote.title} 
-                                    onChange={(e) => updateSelectedNote({ title: e.target.value })}
-                                    className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0"
-                                    placeholder="Titel..."
-                                />
-                                {selectedNote.taxRelevant && (
-                                    <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">In Steuer importiert</span>
-                                )}
-                                {selectedNote.isExpense && (
-                                    <span className="text-[9px] bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">Ausgabe Erfasst</span>
-                                )}
+                                <input type="text" value={selectedNote.title} onChange={(e) => updateSelectedNote({ title: e.target.value })} className="text-lg font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300 truncate min-w-0" placeholder="Titel..."/>
+                                {selectedNote.taxRelevant && <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap hidden lg:inline-block shrink-0">In Steuer importiert</span>}
                             </div>
-                            
-                            {/* CATEGORY & SUB-CATEGORY EDITING */}
                             <div className="flex items-center gap-2 mt-1 h-6 overflow-x-auto no-scrollbar">
-                                <select 
-                                    value={selectedNote.category} 
-                                    onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} // Reset subcat on main change
-                                    className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" 
-                                    title="Kategorie ändern"
-                                >
-                                    {CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                                
+                                <select value={selectedNote.category} onChange={(e) => changeCategory(e.target.value as DocCategory, undefined)} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-bold border border-transparent hover:border-gray-300 transition-colors" title="Kategorie ändern">{CATEGORY_KEYS.map(c => <option key={c} value={c}>{c}</option>)}</select>
                                 <span className="text-gray-300">/</span>
-                                
                                 {CATEGORY_STRUCTURE[selectedNote.category]?.length > 0 ? (
-                                    <select 
-                                        value={selectedNote.subCategory || ''}
-                                        onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)}
-                                        className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors"
-                                    >
-                                        <option value="">(Keine Unterkategorie)</option>
-                                        {CATEGORY_STRUCTURE[selectedNote.category].map(sub => (
-                                            <option key={sub} value={sub}>{sub}</option>
-                                        ))}
+                                    <select value={selectedNote.subCategory || ''} onChange={(e) => changeCategory(selectedNote.category, e.target.value || undefined)} className="text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-lg outline-none cursor-pointer font-medium hover:border-gray-300 transition-colors">
+                                        <option value="">(Keine Unterkategorie)</option>{CATEGORY_STRUCTURE[selectedNote.category].map(sub => (<option key={sub} value={sub}>{sub}</option>))}
                                     </select>
-                                ) : (
-                                    <span className="text-[10px] text-gray-300 italic">n/a</span>
-                                )}
-
+                                ) : (<span className="text-[10px] text-gray-300 italic">n/a</span>)}
                                 <div className="w-px h-3 bg-gray-200 mx-1"></div>
                                 <span className="text-[10px] text-gray-400 uppercase tracking-widest font-mono shrink-0">{selectedNote.year}</span>
                             </div>
                         </div>
                     </div>
                     <div className="flex items-center gap-1 md:gap-2 shrink-0">
-                        {/* Zoom Toggle Button */}
-                        <button 
-                            onClick={() => setIsLensEnabled(!isLensEnabled)}
-                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
-                                isLensEnabled 
-                                ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
-                                : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
-                            }`}
-                            title={isLensEnabled ? "Lupe deaktivieren" : "Lupe aktivieren"}
-                        >
-                            <ZoomIn size={16} />
-                        </button>
-
-                        {/* TOGGLE EXPENSE */}
-                        <button 
-                            onClick={toggleExpenseImport}
-                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
-                                selectedNote.isExpense
-                                ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm' 
-                                : 'bg-white border-gray-100 text-gray-300 hover:text-orange-500 hover:border-orange-100'
-                            }`}
-                            title={selectedNote.isExpense ? "Ausgabe entfernen" : "Zu Ausgaben hinzufügen"}
-                        >
-                            <ShoppingBag size={16} />
-                        </button>
-
-                        {/* AI RE-ANALYSIS BUTTON */}
-                        <button 
-                            onClick={handleReanalyzeContent}
-                            disabled={isReanalyzing}
-                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`}
-                            title="Inhalt neu analysieren & kategorisieren (ohne Steuer-Import)"
-                        >
-                            {isReanalyzing ? (
-                                <Loader2 size={16} className="animate-spin text-purple-500" />
-                            ) : (
-                                <BrainCircuit size={16} />
-                            )}
-                        </button>
-
-                        {/* TAX IMPORT BUTTON */}
-                        <button 
-                            onClick={toggleTaxImport}
-                            disabled={isAnalyzingTax}
-                            className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${
-                                selectedNote.taxRelevant 
-                                ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' 
-                                : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'
-                            }`}
-                            title={selectedNote.taxRelevant ? "Bereits importiert (Klick zum Entfernen)" : "Via AI scannen & in Steuern importieren"}
-                        >
-                            {isAnalyzingTax ? (
-                                <Loader2 size={16} className="animate-spin text-blue-500" />
-                            ) : (
-                                <>
-                                    {selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />}
-                                </>
-                            )}
-                        </button>
-
-                        <div className="w-px h-6 bg-gray-100 mx-1"></div>
-
-                        {selectedNote.filePath && (
-                            <button onClick={openFile} className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Dokument Öffnen"><Eye size={16} /></button>
+                        {/* Always show actions for non-text notes, even if filePath is missing (DB files) */}
+                        
+                        {(selectedNote.type !== 'note' || activeFileBlob) && (
+                            <button onClick={handleShare} className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors" title="Teilen / Senden"><Share2 size={16} /></button>
                         )}
+                        {(selectedNote.type !== 'note' || activeFileBlob) && (
+                            <button onClick={handlePrint} className="p-1.5 text-gray-600 bg-white border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors hidden md:block" title="Drucken"><Printer size={16} /></button>
+                        )}
+                        {(selectedNote.type !== 'note' || activeFileBlob) && (
+                            <button onClick={handleDownload} className="p-1.5 text-gray-600 bg-white border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors hidden md:block" title="Download"><Download size={16} /></button>
+                        )}
+                        
+                        {/* MAXIMIZE BUTTON ALWAYS VISIBLE */}
+                        <button onClick={() => setIsMaximized(!isMaximized)} className={`p-1.5 rounded-lg transition-colors ${isMaximized ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-blue-600'}`} title={isMaximized ? "Verkleinern" : "Vollbild"}>
+                            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                        </button>
+                        
+                        <div className="w-px h-6 bg-gray-100 mx-1"></div>
+                        <button onClick={() => setIsLensEnabled(!isLensEnabled)} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${isLensEnabled ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`} title={isLensEnabled ? "Lupe deaktivieren" : "Lupe aktivieren"}><ZoomIn size={16} /></button>
+                        <button onClick={toggleExpenseImport} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.isExpense ? 'bg-orange-50 border-orange-200 text-orange-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-orange-500 hover:border-orange-100'}`} title={selectedNote.isExpense ? "Ausgabe entfernen" : "Zu Ausgaben hinzufügen"}><ShoppingBag size={16} /></button>
+                        <button onClick={handleReanalyzeContent} disabled={isReanalyzing} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 bg-white border-gray-100 text-gray-400 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50`} title="Inhalt neu analysieren & kategorisieren (ohne Steuer-Import)">{isReanalyzing ? <Loader2 size={16} className="animate-spin text-purple-500" /> : <BrainCircuit size={16} />}</button>
+                        <button onClick={toggleTaxImport} disabled={isAnalyzingTax} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 ${selectedNote.taxRelevant ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`} title={selectedNote.taxRelevant ? "Bereits importiert (Klick zum Entfernen)" : "Via AI scannen & in Steuern importieren"}>{isAnalyzingTax ? <Loader2 size={16} className="animate-spin text-blue-500" /> : <>{selectedNote.taxRelevant ? <Receipt size={16} /> : <Sparkles size={16} />}</>}</button>
+                        <div className="w-px h-6 bg-gray-100 mx-1"></div>
                         <button onClick={deleteNote} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                     </div>
                 </div>
                 
                 <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
-                    {/* RICH TEXT EDITOR */}
                     {selectedNote.type === 'note' ? (
                         <div key={selectedNote.id} className="flex flex-col h-full bg-white">
                             {/* Toolbar */}
@@ -1623,42 +1498,26 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                 <div className="flex items-center gap-1 p-2 overflow-x-auto flex-nowrap no-scrollbar">
                                     <button onClick={() => execCmd('undo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Rückgängig"><Undo size={14}/></button>
                                     <button onClick={() => execCmd('redo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Wiederholen"><Redo size={14}/></button>
-                                    
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-
                                     <button onClick={() => execCmd('bold')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 font-bold" title="Fett"><Bold size={14}/></button>
                                     <button onClick={() => execCmd('italic')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 italic" title="Kursiv"><Italic size={14}/></button>
                                     <button onClick={() => execCmd('underline')} className="p-1.5 hover:bg-gray-200 rounded text-gray-700 underline" title="Unterstrichen"><Underline size={14}/></button>
-                                    
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-
                                     <button onClick={() => execCmd('insertUnorderedList')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Liste"><List size={14}/></button>
                                     <button onClick={insertTable} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Tabelle einfügen"><TableIcon size={14}/></button>
-                                    
                                     <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer" title="Textfarbe">
                                         <Palette size={14} />
-                                        <input 
-                                            ref={colorInputRef}
-                                            type="color" 
-                                            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                                            onChange={(e) => execCmd('foreColor', e.target.value)}
-                                            title="Textfarbe wählen"
-                                        />
+                                        <input ref={colorInputRef} type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => execCmd('foreColor', e.target.value)} title="Textfarbe wählen" />
                                     </div>
-
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
-
                                     <label className="p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer flex items-center gap-1" title="Bild einfügen">
                                         <ImagePlus size={14}/>
                                         <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
                                     </label>
                                 </div>
-                                {/* TABLE CONTEXT MENU */}
                                 {activeTableCtx && (
                                     <div className="flex items-center gap-1 p-1 bg-blue-50 border-t border-blue-100 overflow-x-auto flex-nowrap animate-in slide-in-from-top-1">
-                                        <div className="px-2 text-[9px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1">
-                                            <Layout size={10}/> Tabelle
-                                        </div>
+                                        <div className="px-2 text-[9px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1"><Layout size={10}/> Tabelle</div>
                                         <button onClick={() => manipulateTable('addRowAbove')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile oben"><ArrowUp size={12}/> Zeile</button>
                                         <button onClick={() => manipulateTable('addRowBelow')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile unten"><ArrowDown size={12}/> Zeile</button>
                                         <div className="w-px h-3 bg-blue-200 mx-1"></div>
@@ -1672,93 +1531,81 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     </div>
                                 )}
                             </div>
-
-                            {/* Editable Area */}
-                            <div 
-                                ref={editorRef}
-                                contentEditable
-                                onInput={handleEditorInput}
-                                onPaste={handlePaste}
-                                onSelect={checkTableContext} // Check cursor position
-                                onClick={checkTableContext} // Check cursor position
-                                onKeyUp={checkTableContext} // Check cursor position
-                                className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_td]:align-top [&_td]:break-words [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50 [&_th]:text-left pb-24"
-                                style={{ minHeight: '100px', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}
-                            />
-                            <div className="p-2 border-t border-gray-100 bg-gray-50 text-[10px] text-gray-400 flex justify-between safe-area-bottom">
-                                <span>{stripHtml(selectedNote.content).length} Zeichen</span>
-                            </div>
+                            <div ref={editorRef} contentEditable onInput={handleEditorInput} onPaste={handlePaste} onSelect={checkTableContext} onClick={checkTableContext} onKeyUp={checkTableContext} className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_td]:align-top [&_td]:break-words [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50 [&_th]:text-left pb-24" style={{ minHeight: '100px', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }} />
+                            <div className="p-2 border-t border-gray-100 bg-gray-50 text-[10px] text-gray-400 flex justify-between safe-area-bottom"><span>{stripHtml(selectedNote.content).length} Zeichen</span></div>
                         </div>
                     ) : (
-                        // PREVIEW FOR FILES
                         <div className="flex-1 p-4 overflow-y-auto pb-24" style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
-                           {/* NEW USER NOTE SECTION */}
                            <div className="mb-4">
-                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1">
-                                   <StickyNote size={12} /> Eigene Notizen
-                               </label>
-                               <textarea
-                                   value={selectedNote.userNote || ''}
-                                   onChange={(e) => updateSelectedNote({ userNote: e.target.value })}
-                                   className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all"
-                                   placeholder="Notizen zum Dokument..."
-                               />
+                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1"><StickyNote size={12} /> Eigene Notizen</label>
+                               <textarea value={selectedNote.userNote || ''} onChange={(e) => updateSelectedNote({ userNote: e.target.value })} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..." />
                            </div>
+                           
+                           {/* ROBUST WRAPPER FOR PDF/IMAGE PREVIEW WITH OVERLAY */}
+                           <div className={isMaximized ? "fixed inset-0 z-[5000] bg-white p-2 md:p-4 flex flex-col overflow-auto" : "space-y-2"}>
+                               <div className={`relative ${isMaximized ? 'w-full h-full min-h-screen bg-white' : ''}`}>
+                                   
+                                   {isMaximized && (
+                                       <div className="absolute top-2 right-2 z-50 flex gap-2">
+                                           <button onClick={() => setIsMaximized(false)} className="bg-white p-3 rounded-full shadow-lg border hover:bg-gray-100 text-gray-800" title="Schliessen">
+                                               <Minimize2 size={24} />
+                                           </button>
+                                       </div>
+                                   )}
 
-                           {selectedNote.type === 'pdf' && activeFileBlob ? (
-                                <div className="space-y-2">
-                                    <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1">
-                                        <FileText size={14} className="text-gray-400" />
-                                        <span className="font-mono truncate">{selectedNote.fileName}</span>
-                                    </div>
-                                    <div className="overflow-x-auto border border-gray-200 rounded-lg">
-                                        <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
-                                    </div>
-                                </div>
-                           ) : selectedNote.type === 'image' ? (
-                                <div className="space-y-2">
-                                    <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1">
-                                        <ImageIcon size={14} className="text-gray-400" />
-                                        <span className="font-mono truncate">{selectedNote.fileName}</span>
-                                    </div>
-                                    {/* Simplified Image Preview if activeFileBlob exists */}
-                                    {activeFileBlob && (
-                                        <div className="rounded-lg border border-gray-200 overflow-hidden shadow-sm">
-                                            <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
+                                   {selectedNote.type === 'pdf' && activeFileBlob ? (
+                                        <div className={isMaximized ? "w-full h-full overflow-auto" : "space-y-2"}>
+                                            {!isMaximized && (
+                                                <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1"><FileText size={14} className="text-gray-400" /><span className="font-mono truncate">{selectedNote.fileName}</span></div>
+                                            )}
+                                            <div className={`${isMaximized ? 'min-h-screen' : 'overflow-x-auto border border-gray-200 rounded-lg'}`}>
+                                                <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
+                                            </div>
+                                        </div>
+                                   ) : selectedNote.type === 'image' ? (
+                                        <div className={isMaximized ? "w-full h-full overflow-auto flex items-center justify-center bg-gray-50" : "space-y-2"}>
+                                            {!isMaximized && (
+                                                <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1"><ImageIcon size={14} className="text-gray-400" /><span className="font-mono truncate">{selectedNote.fileName}</span></div>
+                                            )}
+                                            {activeFileBlob && (
+                                                <div className={`${isMaximized ? 'w-full h-auto' : 'rounded-lg border border-gray-200 overflow-hidden shadow-sm'}`}>
+                                                    <img 
+                                                        src={URL.createObjectURL(activeFileBlob)} 
+                                                        alt="Preview" 
+                                                        className={isMaximized ? "w-full h-auto object-contain" : "w-full h-auto"} 
+                                                    />
+                                                </div>
+                                            )}
+                                            {!isMaximized && (
+                                                <div className="space-y-1 mt-4">
+                                                    <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text</h5>
+                                                    <div className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 leading-relaxed overflow-x-auto" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center h-full text-center space-y-6">
+                                            <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                                                {selectedNote.type === 'word' ? <FileType size={48} /> : <FileSpreadsheet size={48} />}
+                                            </div>
+                                            <div className="space-y-2">
+                                                <h3 className="text-xl font-black text-gray-800">{selectedNote.type === 'word' ? 'Word Dokument' : 'Excel Tabelle'}</h3>
+                                                <p className="text-sm text-gray-400 max-w-md mx-auto">Inhalt extrahiert:<br/><span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span></p>
+                                            </div>
+                                            {selectedNote.filePath && (<button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>)}
                                         </div>
                                     )}
-                                    <div className="space-y-1 mt-4">
-                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Text</h5>
-                                        <div className="w-full p-4 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 leading-relaxed overflow-x-auto" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-full text-center space-y-6">
-                                    <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                                        {selectedNote.type === 'word' ? <FileType size={48} /> : <FileSpreadsheet size={48} />}
-                                    </div>
-                                    <div className="space-y-2">
-                                        <h3 className="text-xl font-black text-gray-800">{selectedNote.type === 'word' ? 'Word Dokument' : 'Excel Tabelle'}</h3>
-                                        <p className="text-sm text-gray-400 max-w-md mx-auto">Inhalt extrahiert:<br/><span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span></p>
-                                    </div>
-                                    {selectedNote.filePath && (
-                                        <button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>
-                                    )}
-                                </div>
-                            )}
+                               </div>
+                           </div>
                         </div>
                     )}
                 </div>
              </>
          ) : (
-             <div className="flex-1 flex flex-col items-center justify-center text-gray-300 hidden md:flex">
-                 <FileText size={64} className="mb-4 opacity-20" />
-                 <p className="text-sm font-bold uppercase tracking-widest">Wähle eine Notiz</p>
-             </div>
+             <div className="flex-1 flex flex-col items-center justify-center text-gray-300 hidden md:flex"><FileText size={64} className="mb-4 opacity-20" /><p className="text-sm font-bold uppercase tracking-widest">Wähle eine Notiz</p></div>
          )}
       </div>
 
-      {/* MODAL: CREATE TABLE */}
       {tableModal.open && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4 animate-in zoom-in-95">
@@ -1781,7 +1628,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
       )}
 
-      {/* MODAL: MANAGE RULES */}
       {ruleModalCat && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
               <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 max-w-full space-y-4 animate-in zoom-in-95 duration-200">
@@ -1800,15 +1646,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
       )}
 
-      {/* NEW: FLOATING TOOLTIP RENDERER (FIXED & COMPACT) */}
       {tooltip && (
-          <div 
-              className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10"
-              style={{ top: tooltip.y, left: tooltip.x, transform: 'translateY(-50%)' }}
-          >
+          <div className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10" style={{ top: tooltip.y, left: tooltip.x, transform: 'translateY(-50%)' }}>
               <div className="font-bold mb-1 border-b border-white/10 pb-1 text-blue-300 uppercase tracking-wider">{tooltip.title}</div>
               <div className="text-gray-300 font-medium">{tooltip.content}</div>
-              {/* Triangle pointing left */}
               <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-r-[6px] border-r-black/90 border-b-[5px] border-b-transparent"></div>
           </div>
       )}

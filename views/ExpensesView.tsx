@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Wallet, 
@@ -84,6 +85,12 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       category: 'Verpflegung',
       date: new Date().toISOString().split('T')[0]
   });
+
+  // --- CRITICAL FIX: Data Ref to prevent stale closures in Async operations ---
+  const latestDataRef = useRef(data);
+  useEffect(() => {
+      latestDataRef.current = data;
+  }, [data]);
 
   // Sync Global Year
   useEffect(() => {
@@ -183,9 +190,12 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       };
 
       const newYear = entry.date.split('-')[0];
-      const expensesForYear = data.dailyExpenses?.[newYear] || [];
       
-      const newData = { ...data };
+      // Use Ref for safety, although addExpense is usually synchronous
+      const currentData = latestDataRef.current;
+      const expensesForYear = currentData.dailyExpenses?.[newYear] || [];
+      
+      const newData = { ...currentData };
       if (!newData.dailyExpenses) newData.dailyExpenses = {};
       newData.dailyExpenses[newYear] = [...expensesForYear, entry];
       
@@ -200,13 +210,15 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
       setIsScanning(true);
       try {
+          // 1. Analyze File
           const result = await GeminiService.analyzeDocument(file);
+          
           if (result && result.dailyExpenseData && result.dailyExpenseData.isExpense) {
               const expData = result.dailyExpenseData;
               const date = result.date || new Date().toISOString().split('T')[0];
               const year = date.split('-')[0];
               
-              // Save Receipt Image
+              // 2. Save Receipt Image
               const receiptId = `receipt_scan_${Date.now()}`;
               await DBService.saveFile(receiptId, file);
 
@@ -225,10 +237,16 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   items: expData.items // EXTRACTED ITEMS (Supports Objects)
               };
 
-              const newData = { ...data };
+              // 3. CRITICAL UPDATE: Use latestDataRef to avoid stale closures
+              // This ensures we append to the LATEST state, even if another scan or delete happened while this one was processing.
+              const currentData = latestDataRef.current;
+              const newData = { ...currentData };
+              
               if (!newData.dailyExpenses) newData.dailyExpenses = {};
-              if (!newData.dailyExpenses[year]) newData.dailyExpenses[year] = [];
-              newData.dailyExpenses[year].push(entry);
+              // Create new array reference
+              const currentYearList = newData.dailyExpenses[year] ? [...newData.dailyExpenses[year]] : [];
+              currentYearList.push(entry);
+              newData.dailyExpenses[year] = currentYearList;
               
               onUpdate(newData);
               alert(`Erfasst: ${entry.merchant} - ${entry.amount} ${entry.currency}`);
@@ -265,7 +283,8 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const saveEdit = () => {
       if (!editForm.id || !editingId) return;
 
-      const newData = { ...data };
+      const currentData = latestDataRef.current;
+      const newData = { ...currentData };
       
       let originalYear = currentYear;
       
@@ -316,8 +335,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
   const deleteExpense = (id: string) => {
       if(confirm("Eintrag löschen?")) {
-          const newData = { ...data };
-          newData.dailyExpenses[currentYear] = allExpenses.filter(e => e.id !== id);
+          const currentData = latestDataRef.current;
+          const newData = { ...currentData };
+          // Ensure we filter the array for the CURRENT YEAR view
+          newData.dailyExpenses[currentYear] = (newData.dailyExpenses[currentYear] || []).filter(e => e.id !== id);
           onUpdate(newData);
       }
   };
