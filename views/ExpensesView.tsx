@@ -28,7 +28,9 @@ import {
   Filter,
   Calendar,
   Receipt,
-  Check
+  Check,
+  ExternalLink,
+  Share2
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -81,6 +83,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [viewingReceiptSrc, setViewingReceiptSrc] = useState<string | null>(null);
   const [isConvertingReceipt, setIsConvertingReceipt] = useState(false);
   const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null); // New non-error status
   
   const scanInputRef = useRef<HTMLInputElement>(null);
   
@@ -367,7 +370,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       
       setViewingReceiptBlob(null);
       setViewingReceiptSrc(null);
-      setReceiptError("Lade Beleg..."); // Set initial state message
+      
+      // FIXED: Use statusMessage instead of receiptError to prevent red flash
+      setStatusMessage("Lade Beleg..."); 
+      setReceiptError(null);
       setIsConvertingReceipt(true);
 
       try {
@@ -377,60 +383,55 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           // 2. If not found, check if this expense is linked to a Note
           // (Detailed deep search)
           if (!blob) {
-              setReceiptError("Suche in Notizen/Vault...");
+              setStatusMessage("Suche in Notizen/Vault...");
               
               const notes = data.notes || {};
               const linkedNote = Object.values(notes).find((n: any) => n.expenseId === entry.id);
               
               if (linkedNote) {
-                  console.log("Found linked note:", linkedNote.id);
                   // 2a. Check DB with Note ID
                   blob = await DBService.getFile(linkedNote.id);
                   
                   // 2b. Check Vault with Note Path
                   if (!blob && VaultService.isConnected() && linkedNote.filePath) {
-                      setReceiptError("Lade aus Vault...");
+                      setStatusMessage("Lade aus Vault...");
                       blob = await DocumentService.getFileFromVault(linkedNote.filePath);
                   }
-              } else {
-                  // Fallback: Check if there is ANY file with the ID in DB, regardless of type
-                  // Sometimes restore messes up ID prefixes
-                  // This part is implicit in step 1, but we could try variations if needed.
               }
           }
 
           if(blob) {
               setViewingReceiptBlob(blob);
               try {
-                  setReceiptError("Verarbeite Bild...");
+                  setStatusMessage("Verarbeite Bild...");
                   const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif' || (!blob.type && blob.size > 0 && !blob.type.includes('image/'));
                   if (isHeic) {
                       try {
                           const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
                           const jpgBlob = Array.isArray(result) ? result[0] : result;
                           setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
-                          setReceiptError(null);
+                          setStatusMessage(null);
                       } catch (convErr) {
+                          // FALLBACK: Use original blob without error text
                           setViewingReceiptSrc(URL.createObjectURL(blob));
-                          setReceiptError("Vorschau evtl. eingeschränkt (HEIC). Bitte 'Download' nutzen.");
+                          setStatusMessage(null); 
                       }
                   } else {
                       setViewingReceiptSrc(URL.createObjectURL(blob));
-                      setReceiptError(null);
+                      setStatusMessage(null);
                   }
               } catch (e) {
                   setReceiptError("Fehler beim Anzeigen des Bildes.");
+                  setStatusMessage(null);
               }
           } else {
-              // NO ALERT - Just status update in modal
               setReceiptError("Datei nicht gefunden. (ID: " + entry.receiptId + ")");
+              setStatusMessage(null);
           }
       } catch (err: any) {
           console.error(err);
           setReceiptError("Fehler: " + err.message);
-      } finally {
-          // Do not close modal automatically on error
-          // Spinner is controlled by the content availability
+          setStatusMessage(null);
       }
   };
 
@@ -439,7 +440,28 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setViewingReceiptBlob(null);
       setViewingReceiptSrc(null);
       setReceiptError(null);
+      setStatusMessage(null);
       setIsConvertingReceipt(false);
+  };
+
+  // --- SHARE FUNCTION ---
+  const handleShare = async () => {
+      if (!viewingReceiptSrc || !viewingReceiptBlob) return;
+      
+      try {
+          const file = new File([viewingReceiptBlob], `beleg_${Date.now()}.jpg`, { type: viewingReceiptBlob.type || 'image/jpeg' });
+          if (navigator.share) {
+              await navigator.share({
+                  files: [file],
+                  title: 'Beleg',
+                  text: 'Ausgabenbeleg aus TaTDMA'
+              });
+          } else {
+              alert("Teilen wird von diesem Browser nicht unterstützt.");
+          }
+      } catch (e) {
+          console.log("Share cancelled or failed", e);
+      }
   };
 
   const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -1040,53 +1062,112 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* RECEIPT VIEWER MODAL */}
+      {/* RECEIPT VIEWER MODAL - FIXED MOBILE LAYOUT & CENTERED DESKTOP */}
       {isConvertingReceipt && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/90 backdrop-blur-md animate-in fade-in p-4">
-              <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg flex flex-col items-center gap-4">
-                  {!viewingReceiptSrc && !receiptError && (
-                      <div className="flex flex-col items-center gap-2">
-                          <Loader2 size={32} className="animate-spin text-blue-600" />
-                          <p className="text-sm font-bold text-gray-600">Lade Beleg...</p>
-                      </div>
-                  )}
-                  
-                  {viewingReceiptSrc && (
-                      <>
-                          <div className="w-full max-h-[60vh] overflow-auto rounded-lg border border-gray-200">
-                              <img src={viewingReceiptSrc} alt="Beleg" className="w-full h-auto" />
+          <div 
+              className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none"
+          >
+              {/* Modal Container - NO BACKDROP */}
+              <div 
+                  className="
+                    relative 
+                    w-full h-full flex flex-col 
+                    bg-white
+                    pt-[env(safe-area-inset-top)] /* iOS Safe Area Fix */
+                    pointer-events-auto
+                    
+                    /* Desktop Styles: Centered Card */
+                    md:w-auto md:max-w-5xl md:h-auto md:max-h-[90vh] 
+                    md:rounded-2xl md:bg-white md:shadow-2xl md:border md:border-gray-200
+                    md:flex-col md:overflow-hidden
+                  "
+                  onClick={(e) => e.stopPropagation()} // Prevent closing when clicking content
+              >
+                  {/* Close Button Mobile - Moved down slightly */}
+                  <button 
+                      onClick={closeReceiptModal} 
+                      className="absolute top-4 right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full transition-colors md:hidden"
+                  >
+                      <X size={20} />
+                  </button>
+
+                  {/* Desktop Header */}
+                  <div className="hidden md:flex items-center justify-between p-4 border-b border-gray-200 bg-white shrink-0">
+                      <h3 className="text-gray-800 font-bold text-sm flex items-center gap-2">
+                          <FileText size={16} className="text-gray-400" />
+                          Beleg Vorschau
+                      </h3>
+                      <button onClick={closeReceiptModal} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+                          <X size={20} />
+                      </button>
+                  </div>
+
+                  {/* Main Image Area - Flex Grow */}
+                  <div className="flex-1 min-h-0 w-full flex items-center justify-center p-4 relative overflow-hidden bg-gray-50 md:bg-white">
+                      {!viewingReceiptSrc && !receiptError && (
+                          <div className="flex flex-col items-center gap-4">
+                              <Loader2 size={48} className="animate-spin text-gray-400" />
+                              <p className="text-gray-600 font-bold text-sm">{statusMessage || "Lade Beleg..."}</p>
                           </div>
-                          <div className="flex gap-2 w-full mt-2">
-                              <a href={viewingReceiptSrc} download="beleg.jpg" className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700">
-                                  <Save size={16}/> Speichern
+                      )}
+                      
+                      {viewingReceiptSrc && (
+                          <img 
+                              src={viewingReceiptSrc} 
+                              alt="Beleg" 
+                              className="max-w-full max-h-full object-contain shadow-lg rounded-lg" 
+                          />
+                      )}
+
+                      {receiptError && (
+                          <div className="p-6 bg-red-50 border border-red-200 rounded-2xl text-center max-w-sm">
+                              <p className="text-red-600 font-bold">{receiptError}</p>
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Bottom Actions Bar - Fixed bottom on mobile, static on desktop */}
+                  <div className="w-full p-4 bg-gray-50 border-t border-gray-200 shrink-0 pb-10 md:pb-4 md:bg-white">
+                      {/* Actions */}
+                      {viewingReceiptSrc && (
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
+                              {/* Desktop: Close Button in Footer too */}
+                              <button 
+                                  onClick={closeReceiptModal} 
+                                  className="hidden md:block px-6 py-3 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl font-bold text-xs transition-all"
+                              >
+                                  Schliessen
+                              </button>
+
+                              {/* Save Button */}
+                              <a 
+                                  href={viewingReceiptSrc} 
+                                  download={`beleg_${new Date().toISOString()}.jpg`} 
+                                  className="w-full md:w-auto px-8 py-4 md:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
+                              >
+                                  <Save size={18}/> Sichern / Vorschau
                               </a>
-                              <button onClick={closeReceiptModal} className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200">
+                              
+                              {/* Share Button */}
+                              {navigator.share && (
+                                  <button 
+                                      onClick={handleShare}
+                                      className="w-full md:w-auto px-8 py-4 md:py-3 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                                  >
+                                      <Share2 size={18} /> Teilen
+                                  </button>
+                              )}
+
+                              {/* Mobile Close Button (Big) */}
+                              <button 
+                                  onClick={closeReceiptModal} 
+                                  className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-bold text-sm transition-all md:hidden"
+                              >
                                   Schliessen
                               </button>
                           </div>
-                      </>
-                  )}
-
-                  {receiptError && (
-                      <div className="text-center w-full animate-in slide-in-from-bottom-2">
-                          <div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-4">
-                              <p className="text-red-500 font-bold">{receiptError}</p>
-                          </div>
-                          
-                          {viewingReceiptBlob && (
-                              <a 
-                                  href={URL.createObjectURL(viewingReceiptBlob)} 
-                                  download="beleg_original" 
-                                  className="block w-full py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 mb-2"
-                              >
-                                  Original Downloaden
-                              </a>
-                          )}
-                          <button onClick={closeReceiptModal} className="block w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200">
-                              Schliessen
-                          </button>
-                      </div>
-                  )}
+                      )}
+                  </div>
               </div>
           </div>
       )}
