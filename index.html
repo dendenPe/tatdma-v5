@@ -3,7 +3,8 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- user-scalable=no entfernt, damit man auf dem Handy zoomen kann (Wichtig für PDF Details) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,14 +14,13 @@
     <!-- Tailwind via CDN für Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Verhindert das "Bouncen" der gesamten Seite auf iOS */
+        /* Standardverhalten für Body, aber Zoom erlauben */
         html, body {
-            overscroll-behavior-y: none;
             height: 100%;
             width: 100%;
-            position: fixed; /* Fixiert den Body, Scrollen findet nur im #root statt */
+            position: fixed;
             overflow: hidden;
-            background-color: #f9fafb; /* bg-gray-50 prevention for white flash */
+            background-color: #f9fafb;
         }
         #root {
             height: 100%;
@@ -49,7 +49,6 @@
         }
     </style>
 
-<link rel="stylesheet" href="/index.css">
 <script type="importmap">
 {
   "imports": {
@@ -61,19 +60,18 @@
     "jspdf": "https://esm.sh/jspdf@^4.1.0",
     "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.7",
     "jszip": "https://esm.sh/jszip@^3.10.1",
-    "pdfjs-dist": "https://esm.sh/pdfjs-dist@4.0.379",
-    "pdfjs-dist/build/pdf.worker.min.mjs": "https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs",
-    "tesseract.js": "https://esm.sh/tesseract.js@5.0.5",
-    "mammoth": "https://esm.sh/mammoth@1.6.0",
-    "xlsx": "https://esm.sh/xlsx@0.18.5",
     "vite": "https://esm.sh/vite@^7.3.1",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
-    "heic2any": "https://esm.sh/heic2any@0.0.4"
+    "pdfjs-dist": "https://esm.sh/pdfjs-dist@^5.4.624",
+    "tesseract.js": "https://esm.sh/tesseract.js@^7.0.0",
+    "mammoth": "https://esm.sh/mammoth@^1.11.0",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "heic2any": "https://esm.sh/heic2any@^0.0.4",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
   }
 }
 </script>
-  <script type="module" crossorigin src="./assets/index-D5hsaoDh.js"></script>
+  <script type="module" crossorigin src="./assets/index-DXHj-DSQ.js"></script>
 </head>
 <body class="bg-gray-50 antialiased text-gray-900">
     <div id="root"></div>
