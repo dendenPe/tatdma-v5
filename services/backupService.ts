@@ -86,7 +86,6 @@ export class BackupService {
     }
 
     // 5. Notes & Documents (Vault Sync Logic)
-    // This is crucial for Mobile Transfer. We must pull files from Vault into ZIP.
     const docsFolder = zip.folder("Documents");
     const notes = Object.values(data.notes || {}) as NoteDocument[];
     
@@ -126,6 +125,34 @@ export class BackupService {
             }
         } catch (e) {
             console.warn(`Failed to include document ${note.title} in backup`, e);
+        }
+    }
+
+    // 6. Daily Expenses (Manual or non-Note linked receipts)
+    const dailyFolder = zip.folder("DailyExpenses");
+    if (data.dailyExpenses) {
+        for (const [year, expenses] of Object.entries(data.dailyExpenses)) {
+            for (const exp of expenses) {
+                // Only if fileId exists AND it hasn't been mapped already (e.g. by Notes)
+                if (exp.receiptId && !fileMapping[exp.receiptId]) {
+                    try {
+                        const blob = await DBService.getFile(exp.receiptId);
+                        if (blob) {
+                            const file = blob as File;
+                            // Default extension
+                            let ext = 'jpg';
+                            if (file.type) ext = file.type.split('/')[1];
+                            
+                            const zipFileName = `exp_${exp.id}.${ext}`;
+                            
+                            if (dailyFolder) {
+                                dailyFolder.file(zipFileName, blob);
+                                fileMapping[exp.receiptId] = `DailyExpenses/${zipFileName}`;
+                            }
+                        }
+                    } catch (e) { console.warn("Skipped daily exp receipt", e); }
+                }
+            }
         }
     }
 

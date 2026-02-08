@@ -36,6 +36,8 @@ import { AppData, ExpenseEntry, EXPENSE_CATEGORIES, ExpenseCategory } from '../t
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, CartesianGrid } from 'recharts';
 import { DBService } from '../services/dbService';
 import { GeminiService } from '../services/geminiService';
+import { DocumentService } from '../services/documentService';
+import { VaultService } from '../services/vaultService';
 
 interface Props {
   data: AppData;
@@ -359,38 +361,76 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const viewReceipt = async (id?: string) => {
-      if(!id) return;
+  // --- SMART VIEW RECEIPT (NON-BLOCKING) ---
+  const viewReceipt = async (entry: ExpenseEntry) => {
+      if(!entry.receiptId) return;
+      
       setViewingReceiptBlob(null);
       setViewingReceiptSrc(null);
-      setReceiptError(null);
+      setReceiptError("Lade Beleg..."); // Set initial state message
       setIsConvertingReceipt(true);
 
-      const blob = await DBService.getFile(id);
-      if(blob) {
-          setViewingReceiptBlob(blob);
-          try {
-              const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif' || (!blob.type && blob.size > 0);
-              if (isHeic) {
-                  try {
-                      const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
-                      const jpgBlob = Array.isArray(result) ? result[0] : result;
-                      setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
-                  } catch (convErr) {
-                      setViewingReceiptSrc(URL.createObjectURL(blob));
-                      setReceiptError("Vorschau evtl. eingeschränkt (HEIC Format). Bitte 'Download' nutzen.");
+      try {
+          // 1. Try DB using the exact Receipt ID
+          let blob = await DBService.getFile(entry.receiptId);
+          
+          // 2. If not found, check if this expense is linked to a Note
+          // (Detailed deep search)
+          if (!blob) {
+              setReceiptError("Suche in Notizen/Vault...");
+              
+              const notes = data.notes || {};
+              const linkedNote = Object.values(notes).find((n: any) => n.expenseId === entry.id);
+              
+              if (linkedNote) {
+                  console.log("Found linked note:", linkedNote.id);
+                  // 2a. Check DB with Note ID
+                  blob = await DBService.getFile(linkedNote.id);
+                  
+                  // 2b. Check Vault with Note Path
+                  if (!blob && VaultService.isConnected() && linkedNote.filePath) {
+                      setReceiptError("Lade aus Vault...");
+                      blob = await DocumentService.getFileFromVault(linkedNote.filePath);
                   }
               } else {
-                  setViewingReceiptSrc(URL.createObjectURL(blob));
+                  // Fallback: Check if there is ANY file with the ID in DB, regardless of type
+                  // Sometimes restore messes up ID prefixes
+                  // This part is implicit in step 1, but we could try variations if needed.
               }
-          } catch (e) {
-              setReceiptError("Fehler beim Laden des Bildes.");
-          } finally {
-              setIsConvertingReceipt(false);
           }
-      } else {
-          alert("Beleg nicht gefunden.");
-          setIsConvertingReceipt(false);
+
+          if(blob) {
+              setViewingReceiptBlob(blob);
+              try {
+                  setReceiptError("Verarbeite Bild...");
+                  const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif' || (!blob.type && blob.size > 0 && !blob.type.includes('image/'));
+                  if (isHeic) {
+                      try {
+                          const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
+                          const jpgBlob = Array.isArray(result) ? result[0] : result;
+                          setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
+                          setReceiptError(null);
+                      } catch (convErr) {
+                          setViewingReceiptSrc(URL.createObjectURL(blob));
+                          setReceiptError("Vorschau evtl. eingeschränkt (HEIC). Bitte 'Download' nutzen.");
+                      }
+                  } else {
+                      setViewingReceiptSrc(URL.createObjectURL(blob));
+                      setReceiptError(null);
+                  }
+              } catch (e) {
+                  setReceiptError("Fehler beim Anzeigen des Bildes.");
+              }
+          } else {
+              // NO ALERT - Just status update in modal
+              setReceiptError("Datei nicht gefunden. (ID: " + entry.receiptId + ")");
+          }
+      } catch (err: any) {
+          console.error(err);
+          setReceiptError("Fehler: " + err.message);
+      } finally {
+          // Do not close modal automatically on error
+          // Spinner is controlled by the content availability
       }
   };
 
@@ -399,6 +439,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       setViewingReceiptBlob(null);
       setViewingReceiptSrc(null);
       setReceiptError(null);
+      setIsConvertingReceipt(false);
   };
 
   const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -713,7 +754,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                       </td>
                                       <td className="px-4 py-4 text-center align-top">
                                           {e.receiptId && (
-                                              <button onClick={() => viewReceipt(e.receiptId)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors">
+                                              <button onClick={() => viewReceipt(e)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors">
                                                   <FileText size={14} />
                                               </button>
                                           )}
@@ -850,7 +891,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                               </div>
                               <div className="flex items-center gap-3">
                                   {e.receiptId && (
-                                      <button onClick={() => viewReceipt(e.receiptId)} className="text-blue-500 bg-blue-50 p-1.5 rounded-lg">
+                                      <button onClick={() => viewReceipt(e)} className="text-blue-500 bg-blue-50 p-1.5 rounded-lg">
                                           <FileText size={16} />
                                       </button>
                                   )}
@@ -997,6 +1038,57 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                 </div>
             </div>
         </div>
+      )}
+
+      {/* RECEIPT VIEWER MODAL */}
+      {isConvertingReceipt && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/90 backdrop-blur-md animate-in fade-in p-4">
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg flex flex-col items-center gap-4">
+                  {!viewingReceiptSrc && !receiptError && (
+                      <div className="flex flex-col items-center gap-2">
+                          <Loader2 size={32} className="animate-spin text-blue-600" />
+                          <p className="text-sm font-bold text-gray-600">Lade Beleg...</p>
+                      </div>
+                  )}
+                  
+                  {viewingReceiptSrc && (
+                      <>
+                          <div className="w-full max-h-[60vh] overflow-auto rounded-lg border border-gray-200">
+                              <img src={viewingReceiptSrc} alt="Beleg" className="w-full h-auto" />
+                          </div>
+                          <div className="flex gap-2 w-full mt-2">
+                              <a href={viewingReceiptSrc} download="beleg.jpg" className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-blue-700">
+                                  <Save size={16}/> Speichern
+                              </a>
+                              <button onClick={closeReceiptModal} className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200">
+                                  Schliessen
+                              </button>
+                          </div>
+                      </>
+                  )}
+
+                  {receiptError && (
+                      <div className="text-center w-full animate-in slide-in-from-bottom-2">
+                          <div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-4">
+                              <p className="text-red-500 font-bold">{receiptError}</p>
+                          </div>
+                          
+                          {viewingReceiptBlob && (
+                              <a 
+                                  href={URL.createObjectURL(viewingReceiptBlob)} 
+                                  download="beleg_original" 
+                                  className="block w-full py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 mb-2"
+                              >
+                                  Original Downloaden
+                              </a>
+                          )}
+                          <button onClick={closeReceiptModal} className="block w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-200">
+                              Schliessen
+                          </button>
+                      </div>
+                  )}
+              </div>
+          </div>
       )}
     </div>
   );
