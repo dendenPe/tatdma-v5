@@ -1,0 +1,80 @@
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <!-- user-scalable=no entfernt, damit man auf dem Handy zoomen kann (Wichtig für PDF Details) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="TaTDMA">
+    <meta name="format-detection" content="telephone=no">
+    <title>TaTDMA v5 - Notes & Docs</title>
+    <!-- Tailwind via CDN für Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Standardverhalten für Body, aber Zoom erlauben */
+        html, body {
+            height: 100%;
+            width: 100%;
+            position: fixed;
+            overflow: hidden;
+            background-color: #f9fafb;
+        }
+        #root {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+        /* Versteckt Scrollbars in Webkit, erlaubt aber Scrollen */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* Custom Scrollbar für Desktop Bereiche */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.05);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "recharts": "https://esm.sh/recharts@^3.7.0",
+    "jspdf": "https://esm.sh/jspdf@^4.1.0",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.7",
+    "jszip": "https://esm.sh/jszip@^3.10.1",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
+    "pdfjs-dist": "https://esm.sh/pdfjs-dist@^5.4.624",
+    "tesseract.js": "https://esm.sh/tesseract.js@^7.0.0",
+    "mammoth": "https://esm.sh/mammoth@^1.11.0",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5",
+    "heic2any": "https://esm.sh/heic2any@^0.0.4",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-gray-50 antialiased text-gray-900">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
