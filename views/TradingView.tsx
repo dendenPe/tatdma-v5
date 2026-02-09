@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp, X } from 'lucide-react';
+import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { AppData, Trade, DayEntry } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';

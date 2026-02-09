@@ -16,7 +16,7 @@ import {
   ReferenceLine
 } from 'recharts';
 import { AppData, DayEntry, Trade } from '../types';
-import { TrendingUp, Clock, Target, Layers, FilterX, CalendarDays, DollarSign, Wallet } from 'lucide-react';
+import { TrendingUp, Clock, Target, Layers, FilterX, CalendarDays, Wallet } from 'lucide-react';
 
 interface Props {
   data: AppData;

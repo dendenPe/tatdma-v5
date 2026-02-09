@@ -7,21 +7,13 @@ import {
   Plus, 
   Wallet, 
   X,
-  Calculator,
   Info,
   TrendingUp,
-  Activity,
-  Coins,
-  ShieldAlert,
   AlertCircle,
-  Archive,
   Pencil,
   Check,
-  ChevronDown,
   History,
   Trash2,
-  DollarSign,
-  PieChart,
   Sparkles,
   Loader2
 } from 'lucide-react';
@@ -120,18 +112,8 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           let newTotalVal = 0;
           let newUnreal = 0;
           let newRealized = 0; // Sum up realized from positions
-          const rates = portfolio.years[currentYear].exchangeRates;
-
+          
           Object.values(portfolio.years[currentYear].positions).forEach(p => {
-              // Calculate Contribution to Total Value (in Base Currency USD)
-              // Usually p.val IS ALREADY in USD/Base from Import, but if manually edited, we trust p.val
-              // If the user fixes the value manually, we take it as is.
-              
-              // However, check if we need to convert for the SUMMARY if the position is held in another currency 
-              // AND the p.val is entered in local currency. 
-              // BUT: The standard app logic assumes p.val is the "Market Value" column from IBKR which is Base Currency (USD).
-              // So we sum p.val directly to totalValue.
-              
               if (p.qty !== 0) { // Active positions only for Total Value
                   newTotalVal += p.val;
                   newUnreal += p.unReal;

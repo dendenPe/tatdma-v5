@@ -5,9 +5,6 @@ import {
   Plus, 
   Trash2, 
   Search, 
-  MapPin, 
-  DollarSign, 
-  PieChart as PieIcon, 
   ShoppingBag, 
   Coffee, 
   Car, 
@@ -15,31 +12,22 @@ import {
   HeartPulse, 
   Globe, 
   FileText, 
-  Eye, 
   Sparkles, 
   Loader2, 
   X, 
-  ChevronDown, 
   ChevronRight, 
   ChevronLeft, 
-  ShoppingBasket, 
   Pencil, 
   Save, 
-  Filter, 
-  Calendar, 
-  Receipt, 
   Check, 
-  ExternalLink, 
   Share2, 
-  Maximize2, 
   RefreshCw, 
-  Clock, 
   History, 
   ListFilter 
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
-import { AppData, ExpenseEntry, EXPENSE_CATEGORIES, ExpenseCategory, RecurringExpense, PriceHistory } from '../types';
+import { AppData, ExpenseEntry, EXPENSE_CATEGORIES, ExpenseCategory, RecurringExpense } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, CartesianGrid } from 'recharts';
 import { DBService } from '../services/dbService';
 import { GeminiService } from '../services/geminiService';
@@ -84,9 +72,6 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [editForm, setEditForm] = useState<Partial<ExpenseEntry>>({});
   const [editItemsText, setEditItemsText] = useState(''); // Textarea for items editing
 
-  // Expanded Rows State (for Items)
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-  
   // Modal for Viewing Receipt
   const [viewingReceiptBlob, setViewingReceiptBlob] = useState<Blob | null>(null);
   const [viewingReceiptSrc, setViewingReceiptSrc] = useState<string | null>(null);
@@ -886,7 +871,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* RECEIPT VIEWER MODAL - REDESIGNED */}
+      {/* RECEIPT VIEWER MODAL */}
       {isConvertingReceipt && (
           <div 
               className="fixed inset-0 z-[100] flex items-center justify-center"
