@@ -25,7 +25,7 @@ import {
   Sparkles,
   Loader2
 } from 'lucide-react';
-import { AppData, PortfolioYear, Portfolio } from '../types';
+import { AppData, PortfolioYear, Portfolio, PortfolioPosition } from '../types';
 import { ImportService } from '../services/importService';
 import { GeminiService } from '../services/geminiService';
 
@@ -45,6 +45,10 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   // Renaming State
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+
+  // Position Editing State
+  const [editingSymbol, setEditingSymbol] = useState<string | null>(null);
+  const [editPosForm, setEditPosForm] = useState<Partial<PortfolioPosition>>({});
 
   const smartImportRef = useRef<HTMLInputElement>(null);
 
@@ -93,6 +97,59 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
     setIsRenaming(false);
   };
 
+  // --- EDIT POSITION LOGIC ---
+  const startEditingPosition = (pos: PortfolioPosition) => {
+      setEditingSymbol(pos.symbol);
+      setEditPosForm({ ...pos });
+  };
+
+  const savePositionEdit = () => {
+      if (!editingSymbol) return;
+      
+      const newData = { ...data };
+      const portfolio = newData.portfolios[data.currentPortfolioId];
+      
+      if (portfolio && portfolio.years[currentYear]) {
+          // 1. Update the position
+          portfolio.years[currentYear].positions[editingSymbol] = { 
+              ...portfolio.years[currentYear].positions[editingSymbol], 
+              ...editPosForm as PortfolioPosition 
+          };
+
+          // 2. Recalculate Summary
+          let newTotalVal = 0;
+          let newUnreal = 0;
+          let newRealized = 0; // Sum up realized from positions
+          const rates = portfolio.years[currentYear].exchangeRates;
+
+          Object.values(portfolio.years[currentYear].positions).forEach(p => {
+              // Calculate Contribution to Total Value (in Base Currency USD)
+              // Usually p.val IS ALREADY in USD/Base from Import, but if manually edited, we trust p.val
+              // If the user fixes the value manually, we take it as is.
+              
+              // However, check if we need to convert for the SUMMARY if the position is held in another currency 
+              // AND the p.val is entered in local currency. 
+              // BUT: The standard app logic assumes p.val is the "Market Value" column from IBKR which is Base Currency (USD).
+              // So we sum p.val directly to totalValue.
+              
+              if (p.qty !== 0) { // Active positions only for Total Value
+                  newTotalVal += p.val;
+                  newUnreal += p.unReal;
+              }
+              newRealized += p.real;
+          });
+
+          // Update Summary
+          portfolio.years[currentYear].summary.totalValue = newTotalVal;
+          portfolio.years[currentYear].summary.unrealized = newUnreal;
+          portfolio.years[currentYear].summary.realized = newRealized;
+
+          onUpdate(newData);
+          setEditingSymbol(null);
+          setEditPosForm({});
+      }
+  };
+
   // --- DELETE FUNCTION (FIXED RECALCULATION) ---
   const removePosition = (symbol: string) => {
     if (!confirm(`Position "${symbol}" wirklich löschen?`)) return;
@@ -107,18 +164,12 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         let newTotalVal = 0;
         let newUnreal = 0;
         let newRealized = 0;
-        const rates = portfolio.years[currentYear].exchangeRates;
         
         Object.values(portfolio.years[currentYear].positions).forEach(p => {
-             let rate = 1;
-             // Only apply rate for current value calculation if needed
-             if (p.currency !== 'USD') rate = rates[`${p.currency}_USD`] || 0;
-             
-             newTotalVal += p.val * rate;
-             newUnreal += p.unReal * rate;
-             
-             // Realized PnL is usually already imported as USD Base in IBKR reports,
-             // but we just sum up whatever is in the position object now.
+             if (p.qty !== 0) {
+                 newTotalVal += p.val;
+                 newUnreal += p.unReal;
+             }
              newRealized += p.real;
         });
         
@@ -141,29 +192,22 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       const portfolio = newData.portfolios[data.currentPortfolioId];
       
       // Determine best starting rates:
-      // 1. Current rates if year exists
-      // 2. Previous year rates if new year
-      // 3. Default defaults
       let baseRates: Record<string, number> = { 'USD_CHF': 0.88, 'EUR_CHF': 0.94, 'EUR_USD': 1.07 };
       
       if (portfolio.years[currentYear]) {
           baseRates = { ...portfolio.years[currentYear].exchangeRates };
       } else {
-          // Check for previous year
           const prevYear = (parseInt(currentYear) - 1).toString();
           if (portfolio.years[prevYear]) {
               baseRates = { ...portfolio.years[prevYear].exchangeRates };
           }
       }
 
-      // Initialize year if missing
       if (!portfolio.years[currentYear]) {
           portfolio.years[currentYear] = { ...yearData, exchangeRates: baseRates };
       }
       
       const targetYear = portfolio.years[currentYear];
-      
-      // PARSE with fallback to baseRates
       const parsedData = ImportService.parseIBKRPortfolioCSV(text, baseRates);
       
       targetYear.positions = parsedData.positions;
@@ -190,7 +234,6 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               const newData = { ...data };
               const portfolio = newData.portfolios[data.currentPortfolioId];
               
-              // Ensure year exists
               if (!portfolio.years[currentYear]) {
                   portfolio.years[currentYear] = { 
                       positions: {}, 
@@ -203,11 +246,10 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               
               const targetYear = portfolio.years[currentYear];
               
-              // Merge Logic: Overwrite with AI data
               targetYear.positions = result.positions;
               targetYear.cash = result.cash;
               targetYear.summary = result.summary;
-              targetYear.exchangeRates = { ...targetYear.exchangeRates, ...result.exchangeRates }; // Merge rates
+              targetYear.exchangeRates = { ...targetYear.exchangeRates, ...result.exchangeRates };
               targetYear.lastUpdate = result.lastUpdate;
 
               onUpdate(newData);
@@ -249,9 +291,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const totalLiquidationValueUSD = yearData.summary.totalValue + cashTotalUSD;
 
   const allPositions = Object.values(yearData.positions);
-  // Active: Qty != 0
   const activePositions = allPositions.filter(p => p.qty !== 0).sort((a, b) => getValUSD(b.currency, b.val) - getValUSD(a.currency, a.val));
-  // Realized: Real != 0 (includes fully closed AND partial sales)
   const realizedPositions = allPositions.filter(p => p.real !== 0).sort((a, b) => b.real - a.real);
 
   const rateKeys = Object.keys(yearData.exchangeRates).sort();
@@ -260,9 +300,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const currentYearNum = new Date().getFullYear();
   const availableYears = Array.from({ length: Math.max(2026 - 2023 + 1, currentYearNum - 2023 + 2) }, (_, i) => (2023 + i).toString());
 
-  // Dividenden Calc
   const netDivUSD = (yearData.summary.dividends || 0) - (yearData.summary.tax || 0);
-  const netDivCHF = netDivUSD * usdToChf;
 
   // --- MOBILE CARD COMPONENTS ---
   const MobilePositionCard = ({ pos }: { pos: any }) => {
@@ -281,9 +319,14 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                 <span className="block text-sm font-black">{unRealUSD >= 0 ? '+' : ''}{unRealUSD.toLocaleString('de-CH', {maximumFractionDigits:0})} $</span>
                 <span className="text-[10px] uppercase font-bold opacity-60">Unreal. PnL</span>
              </div>
-             <button onClick={() => removePosition(pos.symbol)} className="mt-2 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                <Trash2 size={16} />
-             </button>
+             <div className="flex gap-2 mt-2">
+                 <button onClick={() => startEditingPosition(pos)} className="p-1.5 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
+                    <Pencil size={16} />
+                 </button>
+                 <button onClick={() => removePosition(pos.symbol)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                    <Trash2 size={16} />
+                 </button>
+             </div>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-50">
@@ -492,7 +535,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
         </div>
       )}
 
-      {/* Overview Cards - FIXED DIVIDENDS CARD */}
+      {/* Overview Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
         {/* Marktwert */}
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
@@ -528,7 +571,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
            <div className="text-[10px] text-gray-300 font-bold uppercase pt-3 border-t border-gray-50">Laufend</div>
         </div>
 
-        {/* FIXED: Dividends & Tax Card - ALIGNED CORRECTLY */}
+        {/* Dividends & Tax Card */}
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
            <div>
                <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
@@ -578,7 +621,7 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       <th className="px-8 py-5 text-right">Schlusskurs</th>
                       <th className="px-8 py-5 text-right text-blue-600">Marktwert (USD)</th>
                       <th className="px-8 py-5 text-right">Unreal. PnL</th>
-                      <th className="px-4 py-5 w-10"></th>
+                      <th className="px-4 py-5 w-20 text-center">Aktionen</th>
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -606,9 +649,14 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                             {unRealUSD >= 0 ? '+' : ''}{unRealUSD.toLocaleString('de-CH', { minimumFractionDigits: 2 })}
                          </td>
                          <td className="px-4 py-5 text-right">
-                            <button onClick={() => removePosition(pos.symbol)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2" title="Entfernen">
-                                <Trash2 size={16} />
-                            </button>
+                            <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
+                                <button onClick={() => startEditingPosition(pos)} className="text-gray-300 hover:text-blue-500 p-2" title="Bearbeiten">
+                                    <Pencil size={16} />
+                                </button>
+                                <button onClick={() => removePosition(pos.symbol)} className="text-gray-300 hover:text-red-500 p-2" title="Entfernen">
+                                    <Trash2 size={16} />
+                                </button>
+                            </div>
                          </td>
                       </tr>
                    );})}
@@ -745,6 +793,106 @@ const HoldingsView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
             Die Summe der Cash-Bestände aus dem aktiven Portfolio wird automatisch in den Steuer-Tab übernommen.
          </p>
       </div>
+
+      {/* EDIT POSITION MODAL */}
+      {editingSymbol && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200">
+                  <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+                      <h3 className="font-black text-xl text-gray-800 flex items-center gap-2">
+                          <Pencil size={20} className="text-blue-600"/> Position Bearbeiten
+                      </h3>
+                      <button onClick={() => setEditingSymbol(null)} className="p-2 hover:bg-gray-100 rounded-full"><X size={20}/></button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                      <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex justify-between items-center">
+                          <span className="text-xs font-bold text-blue-400 uppercase">Symbol</span>
+                          <span className="font-black text-xl text-blue-700">{editPosForm.symbol}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Menge</label>
+                              <input 
+                                  type="number" 
+                                  value={editPosForm.qty || ''} 
+                                  onChange={(e) => setEditPosForm({...editPosForm, qty: parseFloat(e.target.value)})} 
+                                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
+                              <select 
+                                  value={editPosForm.currency || 'USD'} 
+                                  onChange={(e) => setEditPosForm({...editPosForm, currency: e.target.value})} 
+                                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none"
+                              >
+                                  <option value="USD">USD</option>
+                                  <option value="EUR">EUR</option>
+                                  <option value="CHF">CHF</option>
+                                  <option value="SEK">SEK</option>
+                                  <option value="NOK">NOK</option>
+                                  <option value="GBP">GBP</option>
+                              </select>
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Kaufkurs (Avg)</label>
+                              <input 
+                                  type="number" 
+                                  value={editPosForm.cost || ''} 
+                                  onChange={(e) => setEditPosForm({...editPosForm, cost: parseFloat(e.target.value)})} 
+                                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"
+                              />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Schlusskurs</label>
+                              <input 
+                                  type="number" 
+                                  value={editPosForm.close || ''} 
+                                  onChange={(e) => setEditPosForm({...editPosForm, close: parseFloat(e.target.value)})} 
+                                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"
+                              />
+                          </div>
+                      </div>
+
+                      <div className="space-y-1 pt-2 border-t border-dashed border-gray-200">
+                          <label className="text-[10px] font-black text-purple-500 uppercase flex items-center justify-between">
+                              Marktwert (in Basis-Währung USD)
+                              <span className="text-[9px] text-gray-300">Manuelle Korrektur</span>
+                          </label>
+                          <input 
+                              type="number" 
+                              value={editPosForm.val || ''} 
+                              onChange={(e) => setEditPosForm({...editPosForm, val: parseFloat(e.target.value)})} 
+                              className="w-full bg-purple-50 border border-purple-100 rounded-xl px-4 py-3 text-lg font-black text-purple-700 outline-none focus:ring-2 focus:ring-purple-200"
+                          />
+                          <p className="text-[9px] text-gray-400 italic">Hier korrigieren, falls Währungsumrechnung falsch war.</p>
+                      </div>
+
+                      <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Unrealisiert PnL (USD)</label>
+                          <input 
+                              type="number" 
+                              value={editPosForm.unReal || ''} 
+                              onChange={(e) => setEditPosForm({...editPosForm, unReal: parseFloat(e.target.value)})} 
+                              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 mt-6 pt-4 border-t border-gray-100">
+                      <button onClick={() => setEditingSymbol(null)} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl transition-colors">Abbrechen</button>
+                      <button onClick={savePositionEdit} className="flex-1 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg hover:bg-blue-800 transition-all flex items-center justify-center gap-2">
+                          <Check size={18}/> Speichern
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };
