@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
@@ -47,7 +48,8 @@ const INITIAL_DATA: AppData = {
   currentPortfolioId: 'portfolio_1',
   notes: {},
   categoryRules: {},
-  dailyExpenses: {} // INIT NEW FIELD
+  dailyExpenses: {}, // INIT NEW FIELD
+  recurringExpenses: [] // INIT NEW FIELD
 };
 
 const App: React.FC = () => {
@@ -90,7 +92,8 @@ const App: React.FC = () => {
           portfolios: parsed.portfolios || prev.portfolios,
           notes: parsed.notes || prev.notes,
           categoryRules: parsed.categoryRules || prev.categoryRules,
-          dailyExpenses: parsed.dailyExpenses || prev.dailyExpenses || {} // Merge new field
+          dailyExpenses: parsed.dailyExpenses || prev.dailyExpenses || {}, // Merge new field
+          recurringExpenses: parsed.recurringExpenses || prev.recurringExpenses || [] // Merge new field
         }));
       } catch (e) {
         console.error("Data corruption detected", e);

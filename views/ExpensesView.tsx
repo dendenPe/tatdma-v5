@@ -7,7 +7,7 @@ import {
   Search, 
   MapPin, 
   DollarSign, 
-  PieChart as PieIcon,
+  PieChart as PieIcon, 
   ShoppingBag,
   Coffee,
   Car,
@@ -31,11 +31,15 @@ import {
   Check,
   ExternalLink,
   Share2,
-  Maximize2
+  Maximize2,
+  RefreshCw,
+  Clock,
+  History,
+  ListFilter
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
-import { AppData, ExpenseEntry, EXPENSE_CATEGORIES, ExpenseCategory } from '../types';
+import { AppData, ExpenseEntry, EXPENSE_CATEGORIES, ExpenseCategory, RecurringExpense, PriceHistory } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, CartesianGrid } from 'recharts';
 import { DBService } from '../services/dbService';
 import { GeminiService } from '../services/geminiService';
@@ -71,6 +75,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   
+  // Recurring Expenses State
+  const [isEditingRecurring, setIsEditingRecurring] = useState<string | 'NEW' | null>(null);
+  const [recurringForm, setRecurringForm] = useState<Partial<RecurringExpense>>({ history: [] });
+  
   // Edit State
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<ExpenseEntry>>({});
@@ -95,6 +103,11 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       date: new Date().toISOString().split('T')[0]
   });
 
+  // Temporary State for Adding History Item
+  const [tempHistAmount, setTempHistAmount] = useState('');
+  const [tempHistCurrency, setTempHistCurrency] = useState('CHF');
+  const [tempHistDate, setTempHistDate] = useState('');
+
   const latestDataRef = useRef(data);
   useEffect(() => {
       latestDataRef.current = data;
@@ -105,64 +118,57 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   }, [globalYear]);
 
   // --- HELPER: GET EXCHANGE RATE ---
-  // Retrieves rate from Portfolio (Wertpapiere) or falls back to Tax settings
   const getExchangeRate = (currency: string, year: string): number => {
       if (currency === 'CHF') return 1;
-
-      // 1. Try to find in Portfolio Exchange Rates (defined in HoldingsView)
       const portfolio = data.portfolios[data.currentPortfolioId] || Object.values(data.portfolios)[0];
       if (portfolio && portfolio.years[year] && portfolio.years[year].exchangeRates) {
-          const pair = `${currency}_CHF`; // e.g. "EUR_CHF"
+          const pair = `${currency}_CHF`; 
           const rate = portfolio.years[year].exchangeRates[pair];
           if (rate && rate > 0) return rate;
       }
-
-      // 2. Fallback to Tax Settings
       if (currency === 'USD') return data.tax.rateUSD || 0.85;
       if (currency === 'EUR') return data.tax.rateEUR || 0.94;
-
-      // 3. Fallback default
       return 1;
   };
 
-  // --- HELPER: GET MATCH DATA ---
-  const getMatchData = (e: ExpenseEntry) => {
-      if (!searchTerm) return { matchTotal: 0, matchedItems: [] };
-      
-      const term = searchTerm.toLowerCase();
-      let matchTotal = 0;
-      const matchedItems: {name: string, price: number}[] = [];
-
-      const isHeaderMatch = e.merchant.toLowerCase().includes(term) || (e.description && e.description.toLowerCase().includes(term));
-      
-      if (e.items && e.items.length > 0) {
-          e.items.forEach(item => {
-              const name = typeof item === 'string' ? item : item.name;
-              const price = typeof item === 'string' ? 0 : item.price;
-              
-              if (name.toLowerCase().includes(term)) {
-                  matchTotal += price;
-                  matchedItems.push({ name, price });
-              }
-          });
+  // --- HELPER: GET ACTIVE RECURRING EXPENSE PRICE ---
+  const getRecurringAmountForMonth = (rec: RecurringExpense, yearStr: string, month: number): { amount: number, currency: string, rate: number } | null => {
+      if (rec.frequency === 'Q') {
+          const startMonth = rec.paymentMonth || 1; 
+          const m0 = month - 1;
+          const s0 = startMonth - 1;
+          const diff = m0 - s0;
+          if (diff < 0 || diff % 3 !== 0) return null; 
+      } else if (rec.frequency === 'Y') {
+          if (month !== (rec.paymentMonth || 1)) return null;
       }
 
-      if (isHeaderMatch && matchedItems.length === 0) {
-          matchTotal = e.amount;
-      }
+      const targetDate = new Date(parseInt(yearStr), month - 1, 1); 
+      const sortedHistory = [...(rec.history || [])].sort((a, b) => new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime());
+      const activePrice = sortedHistory.find(h => new Date(h.validFrom) <= targetDate);
+      
+      if (!activePrice) return null; 
 
-      return { matchTotal, matchedItems, isHeaderMatch };
+      const rate = getExchangeRate(activePrice.currency, yearStr);
+      return { amount: activePrice.amount, currency: activePrice.currency, rate };
   };
 
-  // Derived Data
+  // --- RECURRING DATA PROCESSING ---
+  const recurringExpensesList = data.recurringExpenses || [];
+  
+  const recurringTotalCHF = recurringExpensesList.reduce((sum, rec) => {
+      const active = getRecurringAmountForMonth(rec, currentYear, currentMonth);
+      if (active) return sum + (active.amount * active.rate);
+      return sum;
+  }, 0);
+
+  // --- MAIN EXPENSE DATA ---
   const allExpenses = data.dailyExpenses?.[currentYear] || [];
   
   const filteredExpenses = allExpenses.filter(e => {
       const d = new Date(e.date);
       const matchesMonth = d.getMonth() + 1 === currentMonth;
-      
       if (!searchTerm) return matchesMonth;
-
       const term = searchTerm.toLowerCase();
       const matchesSearch = 
           e.merchant.toLowerCase().includes(term) || 
@@ -171,20 +177,61 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               const name = typeof item === 'string' ? item : item.name;
               return name.toLowerCase().includes(term);
           });
-          
       return matchesMonth && matchesSearch;
   }).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  const totalSpend = filteredExpenses.reduce((sum, e) => sum + (e.amount * e.rate), 0);
-  
+  // Search Logic & Matching
+  const getMatchData = (e: ExpenseEntry) => {
+      if (!searchTerm) return { matchTotal: 0, matchedItems: [] };
+      const term = searchTerm.toLowerCase();
+      let matchTotal = 0;
+      const matchedItems: {name: string, price: number}[] = [];
+      const isHeaderMatch = e.merchant.toLowerCase().includes(term) || (e.description && e.description.toLowerCase().includes(term));
+      
+      if (e.items && e.items.length > 0) {
+          e.items.forEach(item => {
+              const name = typeof item === 'string' ? item : item.name;
+              const price = typeof item === 'string' ? 0 : item.price;
+              if (name.toLowerCase().includes(term)) {
+                  matchTotal += price;
+                  matchedItems.push({ name, price });
+              }
+          });
+      }
+      
+      // If we match the header AND have no specific item matches, we assume the user means the whole receipt
+      if (isHeaderMatch && matchedItems.length === 0) {
+          matchTotal = e.amount;
+      }
+      
+      return { matchTotal, matchedItems, isHeaderMatch };
+  };
+
+  // TOTAL SPEND (Daily + Recurring)
+  const dailySpendCHF = filteredExpenses.reduce((sum, e) => {
+      if (searchTerm) {
+          const { matchTotal } = getMatchData(e);
+          return sum + (matchTotal * e.rate);
+      }
+      return sum + (e.amount * e.rate);
+  }, 0);
+
+  // Separate Search Total Calculation for cleaner logic
   const searchTotalSpend = searchTerm ? filteredExpenses.reduce((sum, e) => {
       const { matchTotal } = getMatchData(e);
       return sum + (matchTotal * e.rate);
   }, 0) : 0;
-  
+
+  const totalSpendCHF = searchTerm ? searchTotalSpend : (dailySpendCHF + recurringTotalCHF);
+
+  // Charts Data Preparation
   const catStats = EXPENSE_CATEGORIES.map(cat => {
-      const sum = filteredExpenses.filter(e => e.category === cat).reduce((s, e) => s + (e.amount * e.rate), 0);
-      return { name: cat, value: sum };
+      const dailySum = filteredExpenses.filter(e => e.category === cat).reduce((s, e) => s + (e.amount * e.rate), 0);
+      const recurringSum = recurringExpensesList.filter(r => r.category === cat).reduce((s, r) => {
+          const active = getRecurringAmountForMonth(r, currentYear, currentMonth);
+          return s + (active ? active.amount * active.rate : 0);
+      }, 0);
+      return { name: cat, value: dailySum + recurringSum };
   }).filter(c => c.value > 0).sort((a,b) => b.value - a.value);
 
   const dailyData = Array.from({length: 31}, (_, i) => {
@@ -192,6 +239,68 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       const sum = filteredExpenses.filter(e => new Date(e.date).getDate() === day).reduce((s, e) => s + (e.amount * e.rate), 0);
       return { day: day.toString(), value: sum };
   });
+
+  // --- ACTIONS ---
+  const saveRecurring = () => {
+      const name = recurringForm.name;
+      const category = recurringForm.category || 'Verpflegung';
+      const frequency = recurringForm.frequency || 'M';
+
+      if (!name) { alert("Bitte einen Namen für das Abo eingeben."); return; }
+
+      let finalHistory = [...(recurringForm.history || [])];
+      if (tempHistAmount && tempHistDate) {
+          finalHistory.push({ amount: parseFloat(tempHistAmount), currency: tempHistCurrency, validFrom: tempHistDate });
+      }
+
+      if (finalHistory.length === 0) { alert("Bitte mindestens einen Preis (Historie) hinzufügen."); return; }
+
+      const newData = { ...data };
+      const list = newData.recurringExpenses || [];
+
+      if (isEditingRecurring === 'NEW') {
+          const newRec: RecurringExpense = {
+              id: `rec_${Date.now()}`,
+              name: name,
+              category: category,
+              frequency: frequency,
+              paymentMonth: recurringForm.paymentMonth,
+              history: finalHistory
+          };
+          newData.recurringExpenses = [...list, newRec];
+      } else {
+          const idx = list.findIndex(r => r.id === isEditingRecurring);
+          if (idx !== -1) {
+              list[idx] = { ...list[idx], name, category, frequency, paymentMonth: recurringForm.paymentMonth, history: finalHistory };
+              newData.recurringExpenses = list;
+          }
+      }
+      onUpdate(newData);
+      setIsEditingRecurring(null);
+      setRecurringForm({ history: [] });
+      setTempHistAmount(''); setTempHistDate('');
+  };
+
+  const deleteRecurring = (id: string) => {
+      if(confirm("Abo wirklich löschen?")) {
+          const newData = { ...data };
+          newData.recurringExpenses = (newData.recurringExpenses || []).filter(r => r.id !== id);
+          onUpdate(newData);
+      }
+  };
+
+  const addPriceHistory = (amount: number, currency: string, date: string) => {
+      if (!amount || !date) return;
+      const newHist = [...(recurringForm.history || [])];
+      newHist.push({ amount, currency, validFrom: date });
+      setRecurringForm({ ...recurringForm, history: newHist });
+  };
+
+  const removeHistoryItem = (idx: number) => {
+      const newHist = [...(recurringForm.history || [])];
+      newHist.splice(idx, 1);
+      setRecurringForm({ ...recurringForm, history: newHist });
+  };
 
   const parseItems = (text: string) => {
       return text.split('\n').map(s => {
@@ -209,13 +318,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
   const addExpense = () => {
       if (!newExpense.amount || !newExpense.merchant) return;
-      
       const items = parseItems(editItemsText);
       const uniqueId = `exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       const newDateStr = newExpense.date || new Date().toISOString().split('T')[0];
       const newYear = newDateStr.split('-')[0];
-      
-      // Calculate Rate
       const rate = getExchangeRate(newExpense.currency || 'CHF', newYear);
 
       const entry: ExpenseEntry = {
@@ -232,14 +338,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           items: items
       };
       
-      // SAFE STATE UPDATE
       const currentData = latestDataRef.current;
       const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
       const currentYearList = allExpensesMap[newYear] ? [...allExpensesMap[newYear]] : [];
-      
-      const updatedList = [...currentYearList, entry];
-      allExpensesMap[newYear] = updatedList;
-
+      allExpensesMap[newYear] = [...currentYearList, entry];
       onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
       
       setIsAdding(false);
@@ -259,52 +361,25 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               const year = date.split('-')[0];
               const receiptId = `receipt_scan_${Date.now()}`;
               await DBService.saveFile(receiptId, file);
-              
               const uniqueId = `exp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-              
-              // Calculate Rate based on scanned currency
               const rate = getExchangeRate(expData.currency || 'CHF', year);
-
               const entry: ExpenseEntry = {
-                  id: uniqueId,
-                  date: date,
-                  merchant: expData.merchant || 'Unbekannt',
-                  description: result.title || '',
-                  amount: expData.amount || 0,
-                  currency: expData.currency || 'CHF',
-                  rate: rate,
-                  category: (expData.expenseCategory as any) || 'Sonstiges',
-                  location: expData.location,
-                  isTaxRelevant: result.isTaxRelevant,
-                  receiptId: receiptId,
-                  items: expData.items
+                  id: uniqueId, date: date, merchant: expData.merchant || 'Unbekannt', description: result.title || '',
+                  amount: expData.amount || 0, currency: expData.currency || 'CHF', rate: rate,
+                  category: (expData.expenseCategory as any) || 'Sonstiges', location: expData.location,
+                  isTaxRelevant: result.isTaxRelevant, receiptId: receiptId, items: expData.items
               };
-              
-              // CRITICAL FIX: Safe atomic update
               const currentData = latestDataRef.current;
               const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
               const currentYearList = allExpensesMap[year] ? [...allExpensesMap[year]] : [];
-              const updatedList = [...currentYearList, entry];
-              allExpensesMap[year] = updatedList;
-
+              allExpensesMap[year] = [...currentYearList, entry];
               onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
-              
-              alert(`Erfasst am ${date}: ${entry.merchant} - ${entry.amount} ${entry.currency} (Kurs: ${rate})`);
-              
-              if (currentYear !== year) {
-                  setCurrentYear(year);
-              }
+              alert(`Erfasst am ${date}: ${entry.merchant} - ${entry.amount} ${entry.currency}`);
+              if (currentYear !== year) setCurrentYear(year);
               const m = parseInt(date.split('-')[1]);
               if (!isNaN(m)) setCurrentMonth(m);
-          } else {
-              alert("Konnte keine Ausgabendaten erkennen. Versuche es manuell.");
-          }
-      } catch (err: any) {
-          alert("Fehler beim Scan: " + err.message);
-      } finally {
-          setIsScanning(false);
-          e.target.value = '';
-      }
+          } else { alert("Konnte keine Ausgabendaten erkennen."); }
+      } catch (err: any) { alert("Fehler beim Scan: " + err.message); } finally { setIsScanning(false); e.target.value = ''; }
   };
 
   const startEditing = (entry: ExpenseEntry) => {
@@ -319,647 +394,450 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
   const saveEdit = () => {
       if (!editForm.id || !editingId) return;
-      
       const currentData = latestDataRef.current;
       const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
-      
-      // Find where the entry currently is
       let originalYear = currentYear;
       let found = false;
-      
-      if (allExpensesMap[originalYear]?.find(e => e.id === editingId)) {
-          found = true;
-      } else {
-          for (const y of Object.keys(allExpensesMap)) {
-              if (allExpensesMap[y].find(e => e.id === editingId)) {
-                  originalYear = y;
-                  found = true;
-                  break;
-              }
-          }
-      }
-
-      if (!found) {
-          console.warn("Entry to edit not found in data");
-      }
-
+      if (allExpensesMap[originalYear]?.find(e => e.id === editingId)) found = true;
+      else { for (const y of Object.keys(allExpensesMap)) { if (allExpensesMap[y].find(e => e.id === editingId)) { originalYear = y; found = true; break; } } }
       const newDateStr = editForm.date || new Date().toISOString().split('T')[0];
       const newYear = newDateStr.split('-')[0];
       const updatedItems = parseItems(editItemsText);
-      
-      // Update Rate based on possibly changed currency/year
       const rate = getExchangeRate(editForm.currency || 'CHF', newYear);
-
-      const updatedEntry: ExpenseEntry = {
-          ...editForm as ExpenseEntry,
-          date: newDateStr,
-          items: updatedItems,
-          rate: rate
-      };
-
-      // 1. Remove from old year list
+      const updatedEntry: ExpenseEntry = { ...editForm as ExpenseEntry, date: newDateStr, items: updatedItems, rate: rate };
       const oldList = allExpensesMap[originalYear] || [];
-      const filteredOldList = oldList.filter(e => e.id !== editingId);
-      allExpensesMap[originalYear] = filteredOldList;
-
-      // 2. Add to new year list
+      allExpensesMap[originalYear] = oldList.filter(e => e.id !== editingId);
       const newList = allExpensesMap[newYear] ? [...allExpensesMap[newYear]] : [];
       newList.push(updatedEntry);
       allExpensesMap[newYear] = newList;
-
-      if (originalYear !== newYear) {
-          alert(`Eintrag wurde in das Jahr ${newYear} verschoben.`);
-      }
-
       onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
-      
-      setEditingId(null);
-      setEditForm({});
-      setEditItemsText('');
+      setEditingId(null); setEditForm({}); setEditItemsText('');
   };
 
   const deleteExpense = (id: string) => {
       if(confirm("Eintrag löschen?")) {
           const currentData = latestDataRef.current;
           const allExpensesMap = { ...(currentData.dailyExpenses || {}) };
-          
           const list = allExpensesMap[currentYear] || [];
           allExpensesMap[currentYear] = list.filter(e => e.id !== id);
-          
           onUpdate({ ...currentData, dailyExpenses: allExpensesMap });
       }
   };
 
-  const toggleItems = (id: string) => {
-      setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
   const viewReceipt = async (entry: ExpenseEntry) => {
       if(!entry.receiptId) return;
-      
-      setViewingReceiptBlob(null);
-      setViewingReceiptSrc(null);
-      
-      setStatusMessage("Lade Beleg..."); 
-      setReceiptError(null);
-      setIsConvertingReceipt(true);
-
+      setViewingReceiptBlob(null); setViewingReceiptSrc(null); setStatusMessage("Lade Beleg..."); setReceiptError(null); setIsConvertingReceipt(true);
       try {
           let blob = await DBService.getFile(entry.receiptId);
           if (!blob) {
-              setStatusMessage("Suche in Notizen/Vault...");
               const notes = data.notes || {};
               const linkedNote = Object.values(notes).find((n: any) => n.expenseId === entry.id);
-              if (linkedNote) {
-                  blob = await DBService.getFile(linkedNote.id);
-                  if (!blob && VaultService.isConnected() && linkedNote.filePath) {
-                      setStatusMessage("Lade aus Vault...");
-                      blob = await DocumentService.getFileFromVault(linkedNote.filePath);
-                  }
-              }
+              if (linkedNote && linkedNote.filePath && VaultService.isConnected()) blob = await DocumentService.getFileFromVault(linkedNote.filePath);
           }
-
           if(blob) {
               setViewingReceiptBlob(blob);
               try {
-                  setStatusMessage("Verarbeite Bild...");
-                  const isHeic = blob.type === 'image/heic' || blob.type === 'image/heif' || (!blob.type && blob.size > 0 && !blob.type.includes('image/'));
+                  const isHeic = blob.type === 'image/heic' || (!blob.type && blob.size > 0 && !blob.type.includes('image/'));
                   if (isHeic) {
-                      try {
-                          const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
-                          const jpgBlob = Array.isArray(result) ? result[0] : result;
-                          setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
-                          setStatusMessage(null);
-                      } catch (convErr) {
-                          setViewingReceiptSrc(URL.createObjectURL(blob));
-                          setStatusMessage(null); 
-                      }
-                  } else {
-                      setViewingReceiptSrc(URL.createObjectURL(blob));
-                      setStatusMessage(null);
-                  }
-              } catch (e) {
-                  setReceiptError("Fehler beim Anzeigen des Bildes.");
+                      const result = await heic2any({ blob, toType: 'image/jpeg', quality: 0.8 });
+                      const jpgBlob = Array.isArray(result) ? result[0] : result;
+                      setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
+                  } else { setViewingReceiptSrc(URL.createObjectURL(blob)); }
                   setStatusMessage(null);
-              }
-          } else {
-              setReceiptError("Datei nicht gefunden. (ID: " + entry.receiptId + ")");
-              setStatusMessage(null);
-          }
-      } catch (err: any) {
-          console.error(err);
-          setReceiptError("Fehler: " + err.message);
-          setStatusMessage(null);
-      }
+              } catch (e) { setReceiptError("Fehler beim Anzeigen."); setStatusMessage(null); }
+          } else { setReceiptError("Datei nicht gefunden."); setStatusMessage(null); }
+      } catch (err: any) { setReceiptError("Fehler: " + err.message); setStatusMessage(null); }
   };
 
-  const closeReceiptModal = () => {
-      if (viewingReceiptSrc) URL.revokeObjectURL(viewingReceiptSrc);
-      setViewingReceiptBlob(null);
-      setViewingReceiptSrc(null);
-      setReceiptError(null);
-      setStatusMessage(null);
-      setIsConvertingReceipt(false);
-  };
-
-  const handleShare = async () => {
-      if (!viewingReceiptSrc || !viewingReceiptBlob) return;
-      try {
-          const file = new File([viewingReceiptBlob], `beleg_${Date.now()}.jpg`, { type: viewingReceiptBlob.type || 'image/jpeg' });
-          if (navigator.share) {
-              await navigator.share({
-                  files: [file],
-                  title: 'Beleg',
-                  text: 'Ausgabenbeleg aus TaTDMA'
-              });
-          } else {
-              alert("Teilen wird von diesem Browser nicht unterstützt.");
-          }
-      } catch (e) {
-          console.log("Share cancelled or failed", e);
-      }
-  };
+  const closeReceiptModal = () => { if (viewingReceiptSrc) URL.revokeObjectURL(viewingReceiptSrc); setViewingReceiptBlob(null); setViewingReceiptSrc(null); setReceiptError(null); setStatusMessage(null); setIsConvertingReceipt(false); };
+  const handleShare = async () => { if (!viewingReceiptSrc || !viewingReceiptBlob) return; try { const file = new File([viewingReceiptBlob], `beleg.jpg`, { type: viewingReceiptBlob.type || 'image/jpeg' }); if (navigator.share) await navigator.share({ files: [file], title: 'Beleg' }); else alert("Teilen nicht unterstützt."); } catch (e) {} };
 
   const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
   return (
-    <div 
-        className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden"
-        style={{ touchAction: 'pan-y', overscrollBehaviorX: 'none' }}
-    >
-      {/* IOS SCROLL FIX INJECTION - STRICT MOBILE MODAL STYLING */}
-      <style>{`
-        @media (max-width: 640px) {
-            .mobile-modal-fix {
-                position: fixed !important;
-                bottom: 0 !important;
-                left: 0 !important;
-                width: 100% !important;
-                height: 85vh !important;
-                border-top-left-radius: 1.5rem !important;
-                border-top-right-radius: 1.5rem !important;
-                display: flex !important;
-                flex-direction: column !important;
-                overflow: hidden !important; 
-                touch-action: none !important; 
-                transform: translate3d(0,0,0);
-                z-index: 50 !important;
-            }
-            .mobile-modal-scroll {
-                flex: 1;
-                overflow-y: auto;
-                overflow-x: hidden;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior-y: contain;
-                overscroll-behavior-x: none;
-                touch-action: pan-y;
-                width: 100%;
-            }
-        }
-        @media (min-width: 640px) {
-            .mobile-modal-fix {
-                position: relative;
-                width: auto;
-                max-width: 28rem;
-                touch-action: auto;
-                display: flex;
-                flex-direction: column;
-                max-height: 90vh;
-            }
-            .mobile-modal-scroll {
-                overflow-y: auto;
-                overflow-x: hidden;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior: auto;
-            }
-        }
-      `}</style>
-
-      {/* HEADER & CONTROLS */}
+    <div className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden" style={{ touchAction: 'pan-y' }}>
+      
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 rounded-3xl border border-gray-100 shadow-sm">
           <div className="flex items-center gap-4">
-              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0">
-                  <Wallet size={24} />
-              </div>
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl shrink-0"><Wallet size={24} /></div>
               <div className="min-w-0">
                   <h2 className="text-xl font-black text-gray-800 tracking-tight truncate">Ausgaben</h2>
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{monthNames[currentMonth-1]} {currentYear}</p>
               </div>
           </div>
-          
           <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
               <div className="flex items-center justify-between bg-gray-50 rounded-xl p-1 shrink-0 w-full md:w-auto">
-                  <button onClick={() => setCurrentMonth(prev => prev === 1 ? 12 : prev - 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronLeft size={16}/></button>
-                  <div className="px-2 w-24 text-center font-black text-gray-700 text-sm">
-                      {monthNames[currentMonth-1]}
-                  </div>
-                  <button onClick={() => setCurrentMonth(prev => prev === 12 ? 1 : prev + 1)} className="p-2 hover:bg-white rounded-lg text-gray-400 transition-colors"><ChevronRight size={16}/></button>
+                  <button onClick={() => setCurrentMonth(prev => prev === 1 ? 12 : prev - 1)} className="p-2 hover:bg-white rounded-lg text-gray-400"><ChevronLeft size={16}/></button>
+                  <div className="px-2 w-24 text-center font-black text-gray-700 text-sm">{monthNames[currentMonth-1]}</div>
+                  <button onClick={() => setCurrentMonth(prev => prev === 12 ? 1 : prev + 1)} className="p-2 hover:bg-white rounded-lg text-gray-400"><ChevronRight size={16}/></button>
               </div>
-              
               <div className="grid grid-cols-2 gap-2 w-full md:w-auto md:flex">
-                  <button 
-                      onClick={() => scanInputRef.current?.click()} 
-                      disabled={isScanning}
-                      className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:shadow-lg transition-all"
-                  >
-                      {isScanning ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14} />}
-                      AI Scan
-                  </button>
+                  <button onClick={() => scanInputRef.current?.click()} disabled={isScanning} className="px-3 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:shadow-lg transition-all">{isScanning ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14} />} AI Scan</button>
                   <input type="file" ref={scanInputRef} className="hidden" accept="image/*,application/pdf" onChange={handleSmartScan} />
-                  <button onClick={() => { setIsAdding(true); setEditItemsText(''); }} className="px-3 py-2 bg-[#16325c] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-800 shadow-lg shadow-blue-900/10">
-                      <Plus size={14} /> Neu
-                  </button>
+                  <button onClick={() => { setIsAdding(true); setEditItemsText(''); }} className="px-3 py-2 bg-[#16325c] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-800 shadow-lg shadow-blue-900/10"><Plus size={14} /> Neu</button>
               </div>
           </div>
       </div>
 
-      {/* MOBILE STATS COMPACT */}
+      {/* MOBILE TOTAL */}
       <div className="md:hidden bg-white p-4 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between animate-in fade-in duration-300">
           <div>
-              <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">
-                  {searchTerm ? `Summe "${searchTerm}"` : `Total ${monthNames[currentMonth-1]}`}
-              </p>
-              <h3 className={`text-2xl font-black ${searchTerm ? 'text-purple-600' : 'text-gray-800'}`}>
-                  {(searchTerm ? searchTotalSpend : totalSpend).toLocaleString('de-CH', {minimumFractionDigits: 0})} 
-                  <span className={`text-sm ${searchTerm ? 'text-purple-300' : 'text-gray-400'}`}> CHF</span>
-              </h3>
+              <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">{searchTerm ? `Summe "${searchTerm}"` : `Total ${monthNames[currentMonth-1]}`}</p>
+              <h3 className={`text-2xl font-black ${searchTerm ? 'text-purple-600' : 'text-gray-800'}`}>{totalSpendCHF.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className={`text-sm ${searchTerm ? 'text-purple-300' : 'text-gray-400'}`}> CHF</span></h3>
           </div>
-          {!searchTerm && catStats.length > 0 && (
-              <div className="text-right">
-                  <div className="inline-flex items-center gap-1 p-1.5 bg-orange-50 rounded-lg">
-                      <ShoppingBag size={12} className="text-orange-500"/>
-                      <span className="text-[10px] font-bold text-orange-600">{catStats[0].name}</span>
-                  </div>
-              </div>
-          )}
-          {searchTerm && (
-              <div className="text-right">
-                  <div className="inline-flex items-center gap-1 p-1.5 bg-purple-50 rounded-lg">
-                      <Search size={12} className="text-purple-500"/>
-                      <span className="text-[10px] font-bold text-purple-600">Treffer</span>
-                  </div>
-              </div>
-          )}
       </div>
 
-      {/* DASHBOARD STATS (DESKTOP) */}
-      <div className="hidden md:block">
-      {searchTerm ? (
-          <div className="bg-white p-6 rounded-3xl border border-blue-100 shadow-lg shadow-blue-900/5 animate-in slide-in-from-top-2">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                      <div className="p-3 bg-purple-50 text-purple-600 rounded-2xl">
-                          <Search size={24} />
-                      </div>
+      {/* MAIN GRID LAYOUT */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          
+          {/* MAIN CONTENT AREA (Charts & Daily List) */}
+          <div className="lg:col-span-3 space-y-6">
+              
+              {/* DESKTOP STATS: Show special card when searching, else charts */}
+              {searchTerm ? (
+                  <div className="hidden md:flex bg-purple-50 p-6 rounded-3xl border border-purple-100 shadow-sm items-center justify-between animate-in fade-in">
                       <div>
-                          <p className="text-[10px] uppercase font-bold text-purple-400 tracking-widest">Gefilterte Ausgaben für</p>
-                          <h3 className="text-2xl font-black text-gray-800">"{searchTerm}"</h3>
+                          <p className="text-[10px] uppercase font-bold text-purple-400 tracking-widest mb-1">Suchergebnis "{searchTerm}"</p>
+                          <h3 className="text-3xl font-black text-purple-700">{searchTotalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-purple-400">CHF</span></h3>
+                          <p className="text-[10px] text-purple-400 mt-1 font-bold">Summe aller gefundenen Positionen</p>
+                      </div>
+                      <div className="p-4 bg-white text-purple-500 rounded-2xl shadow-sm"><Search size={32}/></div>
+                  </div>
+              ) : (
+                  <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <div>
+                              <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mb-1">Ausgaben Total</p>
+                              <h3 className="text-3xl font-black text-gray-800">{totalSpendCHF.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-gray-400">CHF</span></h3>
+                              {recurringTotalCHF > 0 && <p className="text-[10px] text-gray-400 mt-1 font-bold">davon {recurringTotalCHF.toLocaleString('de-CH',{maximumFractionDigits:0})} CHF fix (Abos)</p>}
+                          </div>
+                      </div>
+                      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
+                          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Verteilung</h4>
+                          <div className="w-full h-32">
+                              <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                      <Pie data={catStats} innerRadius={35} outerRadius={50} paddingAngle={2} dataKey="value">
+                                          {catStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                      </Pie>
+                                      <Tooltip formatter={(val: number) => val.toFixed(2) + ' CHF'} />
+                                  </PieChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+                      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Tagesverlauf</h4>
+                          <div className="w-full h-32">
+                              <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={dailyData}>
+                                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                      <XAxis dataKey="day" hide />
+                                      <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
+                                      <Bar dataKey="value" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+                                  </BarChart>
+                              </ResponsiveContainer>
+                          </div>
                       </div>
                   </div>
-                  <div className="text-right">
-                      <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Total {monthNames[currentMonth-1]}</p>
-                      <h3 className="text-3xl font-black text-purple-600">
-                          {searchTotalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-purple-300">CHF</span>
+              )}
+
+              {/* TRANSACTIONS LIST */}
+              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden min-h-[400px]">
+                  <div className="p-4 border-b border-gray-50 flex items-center justify-between">
+                      <h3 className="font-bold text-gray-800 text-sm pl-2 flex items-center gap-2">
+                          {searchTerm && <ListFilter size={16} className="text-purple-500" />}
+                          {searchTerm ? 'Suchergebnisse' : 'Einzeltransaktionen'}
                       </h3>
-                      <p className="text-xs font-bold text-gray-400 mt-1">{filteredExpenses.length} Einkäufe gefunden</p>
+                      <div className="relative w-48 hidden md:block">
+                          <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+                          <input type="text" placeholder="Suche..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-blue-100" />
+                      </div>
                   </div>
-              </div>
-          </div>
-      ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-                  <div>
-                      <p className="text-[10px] uppercase font-bold text-gray-400 tracking-widest mb-1">Ausgaben Total</p>
-                      <h3 className="text-3xl font-black text-gray-800">{totalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} <span className="text-sm text-gray-400">CHF</span></h3>
-                  </div>
-                  <div className="mt-6">
-                      {catStats.length > 0 && (
-                          <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-xl border border-orange-100">
-                              <div className="p-2 bg-white rounded-lg text-orange-500 shadow-sm"><ShoppingBag size={16}/></div>
-                              <div>
-                                  <p className="text-[10px] font-bold text-orange-400 uppercase">Top Kategorie</p>
-                                  <p className="text-sm font-black text-orange-700">{catStats[0].name} ({Math.round(catStats[0].value/totalSpend*100)}%)</p>
-                              </div>
-                          </div>
-                      )}
-                  </div>
-              </div>
+                  
+                  {/* Desktop Table */}
+                  <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full text-left">
+                          <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
+                              <tr>
+                                  <th className="px-6 py-4">Datum</th>
+                                  <th className="px-6 py-4">Händler / Details</th>
+                                  <th className="px-6 py-4">Kategorie</th>
+                                  <th className="px-6 py-4 text-right">Betrag</th>
+                                  <th className="px-4 py-4 text-center">Beleg</th>
+                                  <th className="px-4 py-4 text-right">Aktionen</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                              {filteredExpenses.map(e => {
+                                  const { matchTotal, matchedItems } = getMatchData(e);
+                                  const displayAmount = searchTerm ? matchTotal : e.amount;
+                                  const isPartial = searchTerm && matchTotal < e.amount && matchTotal > 0;
 
-              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
-                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Verteilung</h4>
-                  <div className="w-full h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                              <Pie data={catStats} innerRadius={35} outerRadius={50} paddingAngle={2} dataKey="value">
-                                  {catStats.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                              </Pie>
-                              <Tooltip formatter={(val: number) => val.toFixed(2) + ' CHF'} />
-                          </PieChart>
-                      </ResponsiveContainer>
-                  </div>
-                  <div className="flex flex-wrap gap-2 justify-center mt-2">
-                      {catStats.slice(0,3).map((c, i) => (
-                          <div key={c.name} className="flex items-center gap-1 text-[10px] font-bold text-gray-500">
-                              <div className="w-2 h-2 rounded-full" style={{backgroundColor: COLORS[i]}}></div> {c.name}
-                          </div>
-                      ))}
-                  </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest w-full text-left mb-2">Tagesverlauf</h4>
-                  <div className="w-full h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={dailyData}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                              <XAxis dataKey="day" hide />
-                              <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
-                              <Bar dataKey="value" fill="#3b82f6" radius={[2, 2, 0, 0]} />
-                          </BarChart>
-                  </ResponsiveContainer>
-              </div>
-          </div>
-      </div>
-      )}
-      </div>
-
-      {/* TRANSACTION LIST CONTAINER */}
-      <div className="space-y-4">
-          <div className="md:hidden">
-              <div className="relative">
-                  <Search size={16} className="absolute left-3 top-3 text-gray-400" />
-                  <input 
-                      type="text" 
-                      placeholder="Händler oder Produkt suchen..." 
-                      value={searchTerm} 
-                      onChange={(e) => setSearchTerm(e.target.value)} 
-                      className="w-full pl-10 pr-4 py-3 bg-white border border-gray-100 rounded-2xl text-base font-medium shadow-sm outline-none focus:ring-0 focus:border-blue-300 transition-colors" 
-                  />
-              </div>
-          </div>
-
-          <div className="hidden md:block bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-gray-50 flex items-center justify-between">
-                  <h3 className="font-bold text-gray-800 text-sm pl-2">Transaktionen</h3>
-                  <div className="relative w-48">
-                      <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
-                      <input type="text" placeholder="Suche..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-blue-100" />
-                  </div>
-              </div>
-              <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                      <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                          <tr>
-                              <th className="px-6 py-4">Datum</th>
-                              <th className="px-6 py-4">Händler / {searchTerm ? 'Treffer' : 'Kontext'}</th>
-                              <th className="px-6 py-4">Kategorie</th>
-                              <th className="px-6 py-4">Ort</th>
-                              <th className="px-6 py-4 text-right">
-                                  {searchTerm ? 'Item-Preis' : 'Betrag'}
-                              </th>
-                              <th className="px-4 py-4 text-center">Beleg</th>
-                              <th className="px-4 py-4 text-right">Aktionen</th>
-                          </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                          {filteredExpenses.map(e => {
-                              const { matchTotal, matchedItems } = getMatchData(e);
-                              const displayAmount = searchTerm ? matchTotal : e.amount;
-                              const highlightClass = searchTerm ? 'text-purple-600' : 'text-gray-800';
-
-                              return (
-                              <React.Fragment key={e.id}>
-                                  <tr className="hover:bg-gray-50/50 transition-colors group">
-                                      <td className="px-6 py-4 text-xs font-bold text-gray-500 whitespace-nowrap align-top">
-                                          {new Date(e.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}
-                                      </td>
-                                      <td className="px-6 py-4 align-top">
-                                          <div className="flex items-start justify-between">
-                                              <div>
-                                                  <div className="font-bold text-gray-800 text-sm">{e.merchant}</div>
-                                                  {searchTerm && matchedItems.length > 0 ? (
-                                                      <div className="mt-1 space-y-0.5">
-                                                          {matchedItems.map((item, i) => (
-                                                              <div key={i} className="flex items-center gap-1 text-[10px]">
-                                                                  <span className="bg-purple-100 text-purple-700 px-1.5 rounded font-bold">{item.name}</span>
-                                                                  <span className="text-gray-400">{item.price.toFixed(2)}</span>
-                                                              </div>
-                                                          ))}
-                                                      </div>
-                                                  ) : (
-                                                      e.description && e.description !== e.merchant && <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[200px]">{e.description}</div>
-                                                  )}
-                                              </div>
-                                              {e.items && e.items.length > 0 && !searchTerm && (
-                                                  <button onClick={() => toggleItems(e.id)} className={`ml-2 p-1 rounded-full hover:bg-gray-200 transition-colors ${expandedRows[e.id] ? 'bg-blue-50 text-blue-600' : 'text-gray-400'}`}>
-                                                      {expandedRows[e.id] ? <ChevronDown size={14} /> : <ShoppingBasket size={14} />}
-                                                  </button>
-                                              )}
-                                          </div>
-                                      </td>
-                                      <td className="px-6 py-4 align-top">
-                                          <div className="flex items-center gap-2">
-                                              <div className={`p-1.5 rounded-lg bg-gray-100 text-gray-500`}><CategoryIcon cat={e.category} size={14} /></div>
-                                              <span className="text-xs font-medium text-gray-600">{e.category}</span>
-                                          </div>
-                                      </td>
-                                      <td className="px-6 py-4 text-xs text-gray-500 font-medium align-top">
-                                          {e.location || '-'}
-                                      </td>
-                                      <td className="px-6 py-4 text-right align-top">
-                                          <div className={`font-black text-sm ${highlightClass}`}>
-                                              {displayAmount.toFixed(2)} <span className="text-[10px] text-gray-400">{e.currency}</span>
-                                          </div>
-                                          {searchTerm && matchTotal > 0 && Math.abs(matchTotal - e.amount) > 0.01 && (
-                                              <div className="text-[9px] text-gray-300 mt-0.5">
-                                                  von {e.amount.toFixed(2)} Total
-                                              </div>
-                                          )}
-                                          {/* Show Converted CHF Value Explicitly */}
-                                          {e.currency !== 'CHF' && (
-                                              <div className="text-[10px] font-bold text-blue-600 mt-0.5 whitespace-nowrap">
-                                                  = {(displayAmount * e.rate).toFixed(2)} CHF
-                                              </div>
-                                          )}
-                                      </td>
-                                      <td className="px-4 py-4 text-center align-top">
-                                          {e.receiptId && (
-                                              <button onClick={() => viewReceipt(e)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors">
-                                                  <FileText size={14} />
-                                              </button>
-                                          )}
-                                      </td>
-                                      <td className="px-4 py-4 text-right align-top">
-                                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                              <button onClick={() => startEditing(e)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Bearbeiten">
-                                                  <Pencil size={14} />
-                                              </button>
-                                              <button onClick={() => deleteExpense(e.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Löschen">
-                                                  <Trash2 size={14} />
-                                              </button>
-                                          </div>
-                                      </td>
-                                  </tr>
-                                  {expandedRows[e.id] && e.items && !searchTerm && (
-                                      <tr className="bg-gray-50/50 animate-in slide-in-from-top-1 fade-in duration-200">
-                                          <td colSpan={2}></td>
-                                          <td colSpan={5} className="px-6 py-2 pb-4">
-                                              <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm max-w-md">
-                                                  <div className="flex items-center gap-2 mb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-1">
-                                                      <ShoppingBasket size={12}/> Einkaufskorb ({e.items.length})
+                                  return (
+                                      <tr key={e.id} className="hover:bg-gray-50/50 transition-colors">
+                                          <td className="px-6 py-4 text-xs font-bold text-gray-500">{new Date(e.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}</td>
+                                          <td className="px-6 py-4">
+                                              <div className="font-bold text-gray-800 text-sm">{e.merchant}</div>
+                                              {/* Show found items clearly */}
+                                              {isPartial && matchedItems.length > 0 ? (
+                                                  <div className="flex flex-wrap gap-1 mt-1">
+                                                      {matchedItems.map((item, i) => (
+                                                          <span key={i} className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium border border-purple-200">
+                                                              {item.name}
+                                                          </span>
+                                                      ))}
                                                   </div>
-                                                  <ul className="text-xs text-gray-600 space-y-1">
-                                                      {e.items.map((item, idx) => {
-                                                          const isObj = typeof item !== 'string';
-                                                          const name = isObj ? item.name : item;
-                                                          const price = isObj ? item.price : null;
-                                                          return (
-                                                              <li key={idx} className="flex justify-between items-center py-0.5 border-b border-gray-50 last:border-none">
-                                                                  <div className="flex items-center gap-2">
-                                                                      <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
-                                                                      <span>{name}</span>
-                                                                  </div>
-                                                                  {price !== null && (
-                                                                      <span className="font-mono font-bold text-gray-400">{price.toFixed(2)}</span>
-                                                                  )}
-                                                              </li>
-                                                          );
-                                                      })}
-                                                  </ul>
+                                              ) : (
+                                                  e.items && e.items.length > 0 && <div className="text-[10px] text-gray-400">{e.items.length} Positionen</div>
+                                              )}
+                                          </td>
+                                          <td className="px-6 py-4"><span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">{e.category}</span></td>
+                                          <td className="px-6 py-4 text-right">
+                                              <div className={`font-black text-sm ${isPartial ? 'text-purple-600' : 'text-gray-800'}`}>
+                                                  {displayAmount.toFixed(2)} <span className="text-[10px] text-gray-400">{e.currency}</span>
                                               </div>
+                                              {isPartial && <div className="text-[9px] text-purple-400 font-bold">Teilsumme</div>}
+                                              {e.currency !== 'CHF' && !isPartial && <div className="text-[9px] font-bold text-blue-600">{(displayAmount * e.rate).toFixed(2)} CHF</div>}
+                                          </td>
+                                          <td className="px-4 py-4 text-center">{e.receiptId && <button onClick={() => viewReceipt(e)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><FileText size={14}/></button>}</td>
+                                          <td className="px-4 py-4 text-right">
+                                              <button onClick={() => startEditing(e)} className="p-1.5 text-gray-400 hover:text-blue-500"><Pencil size={14}/></button>
+                                              <button onClick={() => deleteExpense(e.id)} className="p-1.5 text-gray-400 hover:text-red-500"><Trash2 size={14}/></button>
                                           </td>
                                       </tr>
-                                  )}
-                              </React.Fragment>
-                          )})}
-                          {filteredExpenses.length === 0 && (
-                              <tr>
-                                  <td colSpan={7} className="px-6 py-12 text-center text-gray-400 text-xs italic">Keine Ausgaben in diesem Monat gefunden.</td>
-                              </tr>
+                                  );
+                              })}
+                              {filteredExpenses.length === 0 && <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-400 text-xs italic">Keine Ausgaben.</td></tr>}
+                          </tbody>
+                          {/* TABLE FOOTER FOR SEARCH OR GENERAL TOTAL */}
+                          {(searchTerm || filteredExpenses.length > 0) && (
+                              <tfoot>
+                                  <tr className={`border-t border-purple-100 ${searchTerm ? 'bg-purple-50' : 'bg-gray-50'}`}>
+                                      <td colSpan={3} className={`px-6 py-4 text-right text-xs font-black uppercase tracking-widest ${searchTerm ? 'text-purple-400' : 'text-gray-400'}`}>
+                                          {searchTerm ? 'Summe Suchergebnisse' : 'Summe Transaktionen'}
+                                      </td>
+                                      <td className={`px-6 py-4 text-right text-sm font-black ${searchTerm ? 'text-purple-700' : 'text-gray-800'}`}>
+                                          {(searchTerm ? searchTotalSpend : dailySpendCHF).toFixed(2)} CHF
+                                      </td>
+                                      <td colSpan={2}></td>
+                                  </tr>
+                              </tfoot>
                           )}
-                      </tbody>
+                      </table>
+                  </div>
+
+                  {/* Mobile List */}
+                  <div className="md:hidden p-4 space-y-3">
+                      <div className="relative mb-4">
+                          <Search size={16} className="absolute left-3 top-3 text-gray-400" />
+                          <input type="text" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-medium outline-none" />
+                      </div>
+                      {filteredExpenses.map(e => {
+                          const { matchTotal, matchedItems } = getMatchData(e);
+                          const displayAmount = searchTerm ? matchTotal : e.amount;
+                          const isPartial = searchTerm && matchTotal < e.amount && matchTotal > 0;
+
+                          return (
+                          <div key={e.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col gap-3">
+                              <div className="flex justify-between items-start">
+                                  <div>
+                                      <h4 className="font-bold text-gray-900">{e.merchant}</h4>
+                                      <p className="text-[10px] text-gray-400">{e.category}</p>
+                                      {isPartial && matchedItems.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-1">
+                                              {matchedItems.map((item, i) => (
+                                                  <span key={i} className="text-[9px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-100">
+                                                      {item.name}
+                                                  </span>
+                                              ))}
+                                          </div>
+                                      )}
+                                  </div>
+                                  <div className="text-right">
+                                      <span className={`block font-black text-lg ${isPartial ? 'text-purple-600' : 'text-gray-800'}`}>
+                                          {displayAmount.toFixed(2)} <span className="text-xs text-gray-400">{e.currency}</span>
+                                      </span>
+                                      {isPartial && <span className="text-[9px] text-purple-400 font-bold block">Teilsumme</span>}
+                                      {!isPartial && e.currency !== 'CHF' && <span className="block text-[10px] font-bold text-blue-600">{(e.amount * e.rate).toFixed(2)} CHF</span>}
+                                  </div>
+                              </div>
+                              <div className="flex justify-between items-center pt-2 border-t border-gray-50">
+                                  <div className="text-xs text-gray-400">{new Date(e.date).toLocaleDateString()}</div>
+                                  <div className="flex gap-2">
+                                      <button onClick={() => startEditing(e)} className="p-1.5 bg-gray-50 rounded text-gray-500"><Pencil size={14}/></button>
+                                      <button onClick={() => deleteExpense(e.id)} className="p-1.5 bg-gray-50 rounded text-gray-500"><Trash2 size={14}/></button>
+                                  </div>
+                              </div>
+                          </div>
+                      )})}
+                      
+                      {/* Mobile Footer Total */}
                       {searchTerm && filteredExpenses.length > 0 && (
-                          <tfoot className="bg-purple-50 border-t-2 border-purple-100">
-                              <tr>
-                                  <td colSpan={4} className="px-6 py-4 text-right font-black text-purple-800 text-xs uppercase tracking-widest">
-                                      Total "{searchTerm}" ({monthNames[currentMonth-1]})
-                                  </td>
-                                  <td className="px-6 py-4 text-right font-black text-purple-700 text-sm">
-                                      {searchTotalSpend.toLocaleString('de-CH', {minimumFractionDigits: 2})} CHF
-                                  </td>
-                                  <td colSpan={2}></td>
-                              </tr>
-                          </tfoot>
+                          <div className="mt-4 bg-purple-50 p-4 rounded-2xl border border-purple-100 flex justify-between items-center shadow-sm">
+                              <span className="text-xs font-black text-purple-400 uppercase tracking-widest">Summe</span>
+                              <span className="text-xl font-black text-purple-700">{searchTotalSpend.toFixed(2)} CHF</span>
+                          </div>
                       )}
-                  </table>
+                  </div>
               </div>
           </div>
 
-          {/* MOBILE LIST (VISIBLE ONLY ON MOBILE) */}
-          <div className="md:hidden space-y-3">
-              {filteredExpenses.map(e => {
-                  const { matchTotal } = getMatchData(e);
-                  const displayAmount = searchTerm ? matchTotal : e.amount;
-                  const highlightClass = searchTerm ? 'text-purple-600' : 'text-gray-800';
+          {/* RECURRING EXPENSES SIDEBAR */}
+          <div className="lg:col-span-1 space-y-4">
+              <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm h-full flex flex-col">
+                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-50">
+                      <h3 className="font-black text-gray-800 text-sm flex items-center gap-2"><RefreshCw size={16} className="text-purple-500"/> Abos / Fix</h3>
+                      <button onClick={() => { setIsEditingRecurring('NEW'); setRecurringForm({ history: [] }); }} className="p-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"><Plus size={16}/></button>
+                  </div>
                   
-                  return (
-                      <div key={e.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col gap-3">
-                          <div className="flex justify-between items-start">
-                              <div className="flex items-center gap-3">
-                                  <div className="flex flex-col items-center bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
-                                      <span className="text-[9px] font-bold text-gray-400 uppercase">{new Date(e.date).toLocaleDateString('de-DE', {month:'short'}).replace('.','')}</span>
-                                      <span className="text-sm font-black text-gray-700">{new Date(e.date).getDate()}</span>
+                  <div className="flex-1 space-y-2 overflow-y-auto max-h-[600px] pr-1 custom-scrollbar">
+                      {recurringExpensesList.length === 0 && <div className="text-center py-8 text-gray-400 text-xs italic">Keine Abos erfasst.</div>}
+                      {recurringExpensesList.map(rec => {
+                          const active = getRecurringAmountForMonth(rec, currentYear, currentMonth);
+                          return (
+                              <div key={rec.id} onClick={() => { setIsEditingRecurring(rec.id); setRecurringForm({...rec}); }} className={`p-3 rounded-xl border cursor-pointer hover:bg-gray-50 transition-all group ${active ? 'border-purple-200 bg-purple-50/30' : 'border-gray-100 bg-white'}`}>
+                                  <div className="flex justify-between items-center mb-1">
+                                      <span className="font-bold text-gray-700 text-sm truncate max-w-[120px]">{rec.name}</span>
+                                      <span className={`text-[9px] px-1.5 rounded font-black ${rec.frequency === 'M' ? 'bg-blue-100 text-blue-600' : rec.frequency === 'Q' ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>{rec.frequency}</span>
                                   </div>
-                                  <div>
-                                      <h4 className="font-bold text-gray-900 leading-tight">{e.merchant}</h4>
-                                      <p className="text-[10px] text-gray-400">{e.category}</p>
-                                  </div>
-                              </div>
-                              <div className="text-right">
-                                  <span className={`block font-black text-lg ${highlightClass}`}>
-                                      {displayAmount.toFixed(2)} <span className="text-xs text-gray-400 font-bold">{e.currency}</span>
-                                  </span>
-                                  {e.currency !== 'CHF' && (
-                                      <span className="block text-[10px] font-bold text-blue-600 mt-0.5">
-                                          = {(displayAmount * e.rate).toFixed(2)} CHF
-                                      </span>
-                                  )}
-                                  {e.items && e.items.length > 0 && !searchTerm && (
-                                      <button onClick={() => toggleItems(e.id)} className="text-[10px] text-blue-500 font-bold flex items-center justify-end gap-1 mt-1">
-                                          {expandedRows[e.id] ? 'Verbergen' : `${e.items.length} Artikel`} <ChevronDown size={10} className={`transform transition-transform ${expandedRows[e.id] ? 'rotate-180' : ''}`} />
-                                      </button>
-                                  )}
-                                  {searchTerm && matchTotal > 0 && Math.abs(matchTotal - e.amount) > 0.01 && (
-                                      <div className="text-[9px] text-gray-300 mt-0.5">
-                                          von {e.amount.toFixed(2)} Total
-                                      </div>
-                                  )}
-                              </div>
-                          </div>
-
-                          {(expandedRows[e.id] || searchTerm) && e.items && (
-                              <div className="bg-gray-50 rounded-xl p-3 text-xs space-y-1 border border-gray-100">
-                                  {e.items.map((item, idx) => {
-                                      const isObj = typeof item !== 'string';
-                                      const name = isObj ? item.name : item;
-                                      const price = isObj ? item.price : null;
-                                      const isMatch = searchTerm && name.toLowerCase().includes(searchTerm.toLowerCase());
-                                      if(searchTerm && !isMatch) return null;
-
-                                      return (
-                                          <div key={idx} className={`flex justify-between items-center border-b border-gray-200/50 pb-1 last:border-0 last:pb-0 ${isMatch ? 'text-purple-700 font-bold' : 'text-gray-600'}`}>
-                                              <span>{name}</span>
-                                              {price !== null && <span className="font-mono">{price.toFixed(2)}</span>}
+                                  <div className="flex justify-between items-end">
+                                      <div className="text-[10px] text-gray-400">{rec.category}</div>
+                                      {active ? (
+                                          <div className="text-right">
+                                              <span className="block font-black text-sm text-purple-700">{active.amount} {active.currency}</span>
+                                              {active.currency !== 'CHF' && <span className="text-[9px] text-gray-400">~ {(active.amount * active.rate).toFixed(0)} CHF</span>}
                                           </div>
-                                      );
-                                  })}
+                                      ) : (
+                                          <span className="text-[9px] text-gray-300 italic">In {monthNames[currentMonth-1].substr(0,3)} inaktiv</span>
+                                      )}
+                                  </div>
                               </div>
-                          )}
-
-                          <div className="flex justify-between items-center pt-2 border-t border-gray-50">
-                              <div className="flex gap-2">
-                                  {e.location && (
-                                      <div className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-50 px-2 py-1 rounded-md">
-                                          <MapPin size={10} /> {e.location}
-                                      </div>
-                                  )}
-                              </div>
-                              <div className="flex items-center gap-3">
-                                  {e.receiptId && (
-                                      <button onClick={() => viewReceipt(e)} className="text-blue-500 bg-blue-50 p-1.5 rounded-lg">
-                                          <FileText size={16} />
-                                      </button>
-                                  )}
-                                  <button onClick={() => startEditing(e)} className="text-gray-400 hover:text-blue-500 p-1.5">
-                                      <Pencil size={16} />
-                                  </button>
-                                  <button onClick={() => deleteExpense(e.id)} className="text-gray-400 hover:text-red-500 p-1.5">
-                                      <Trash2 size={16} />
-                                  </button>
-                              </div>
-                          </div>
+                          );
+                      })}
+                  </div>
+                  
+                  <div className="mt-4 pt-4 border-t border-gray-100">
+                      <div className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-gray-500">Total Fix ({monthNames[currentMonth-1]})</span>
+                          <span className="font-black text-gray-800">{recurringTotalCHF.toFixed(2)} CHF</span>
                       </div>
-                  );
-              })}
-              {filteredExpenses.length === 0 && (
-                  <div className="text-center py-10 text-gray-400 text-xs italic">Keine Ausgaben gefunden.</div>
-              )}
+                  </div>
+              </div>
           </div>
       </div>
 
-      {/* ADD / EDIT MODAL - MOBILE OPTIMIZED */}
+      {/* RECURRING EXPENSE EDIT MODAL */}
+      {isEditingRecurring && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200 relative max-h-[90vh] overflow-y-auto">
+                  <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+                      <h3 className="font-black text-xl text-gray-800">{isEditingRecurring === 'NEW' ? 'Neues Abo / Fixkosten' : 'Abo Bearbeiten'}</h3>
+                      <button onClick={() => setIsEditingRecurring(null)} className="p-2 hover:bg-gray-100 rounded-full"><X size={20}/></button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Name</label>
+                              <input type="text" value={recurringForm.name || ''} onChange={(e) => setRecurringForm({...recurringForm, name: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-purple-100" placeholder="z.B. Netflix" />
+                          </div>
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
+                              <select value={recurringForm.category || 'Verpflegung'} onChange={(e) => setRecurringForm({...recurringForm, category: e.target.value as any})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
+                                  {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">Frequenz</label>
+                              <select value={recurringForm.frequency || 'M'} onChange={(e) => setRecurringForm({...recurringForm, frequency: e.target.value as any})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
+                                  <option value="M">Monatlich</option>
+                                  <option value="Q">Quartalsweise</option>
+                                  <option value="Y">Jährlich</option>
+                              </select>
+                          </div>
+                          {(recurringForm.frequency === 'Q' || recurringForm.frequency === 'Y') && (
+                              <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase">{recurringForm.frequency === 'Y' ? 'Zahlmonat' : 'Startmonat'}</label>
+                                  <select value={recurringForm.paymentMonth || 1} onChange={(e) => setRecurringForm({...recurringForm, paymentMonth: parseInt(e.target.value)})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none">
+                                      {monthNames.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+                                  </select>
+                              </div>
+                          )}
+                      </div>
+
+                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                          <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2"><History size={12}/> Preis-Historie (Gültig ab)</h4>
+                          
+                          <div className="space-y-2 mb-4 max-h-32 overflow-y-auto">
+                              {recurringForm.history?.sort((a,b) => b.validFrom.localeCompare(a.validFrom)).map((h, i) => (
+                                  <div key={i} className="flex items-center justify-between bg-white p-2 rounded-lg border border-gray-100 shadow-sm text-xs">
+                                      <span className="font-mono text-gray-500">{new Date(h.validFrom).toLocaleDateString()}</span>
+                                      <span className="font-bold text-gray-800">{h.amount} {h.currency}</span>
+                                      <button onClick={() => removeHistoryItem(i)} className="text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                                  </div>
+                              ))}
+                              {(!recurringForm.history || recurringForm.history.length === 0) && <div className="text-xs text-gray-400 italic text-center">Noch keine Preise definiert.</div>}
+                          </div>
+
+                          <div className="flex gap-2 items-end border-t border-gray-200 pt-3">
+                              <div className="space-y-1 flex-1">
+                                  <label className="text-[9px] font-bold text-gray-400 uppercase">Betrag</label>
+                                  <input type="number" value={tempHistAmount} onChange={(e) => setTempHistAmount(e.target.value)} className="w-full px-2 py-1.5 rounded border border-gray-300 text-sm font-bold" placeholder="0.00"/>
+                              </div>
+                              <div className="space-y-1 w-20">
+                                  <label className="text-[9px] font-bold text-gray-400 uppercase">Währ.</label>
+                                  <select value={tempHistCurrency} onChange={(e) => setTempHistCurrency(e.target.value)} className="w-full px-1 py-1.5 rounded border border-gray-300 text-sm font-bold"><option value="CHF">CHF</option><option value="USD">USD</option><option value="EUR">EUR</option></select>
+                              </div>
+                              <div className="space-y-1 flex-1">
+                                  <label className="text-[9px] font-bold text-gray-400 uppercase">Gültig ab</label>
+                                  <input type="date" value={tempHistDate} onChange={(e) => setTempHistDate(e.target.value)} className="w-full px-2 py-1.5 rounded border border-gray-300 text-sm"/>
+                              </div>
+                              <button 
+                                  onClick={() => {
+                                      if(tempHistAmount && tempHistDate) {
+                                          addPriceHistory(parseFloat(tempHistAmount), tempHistCurrency, tempHistDate);
+                                          setTempHistAmount(''); setTempHistDate('');
+                                      }
+                                  }}
+                                  disabled={!tempHistAmount || !tempHistDate}
+                                  className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed h-[34px]"
+                              >
+                                  <Plus size={16} />
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 mt-6 pt-4 border-t border-gray-100">
+                      {isEditingRecurring !== 'NEW' && (
+                          <button onClick={() => deleteRecurring(isEditingRecurring as string)} className="p-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-100"><Trash2 size={18}/></button>
+                      )}
+                      <div className="flex-1"></div>
+                      <button onClick={() => setIsEditingRecurring(null)} className="px-6 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl">Abbrechen</button>
+                      <button onClick={saveRecurring} className="px-8 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg hover:bg-blue-800 transition-all flex items-center gap-2"><Check size={18}/> Speichern</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* FIXED: EXPENSE MODAL LAYOUT FOR MOBILE SCROLLING */}
       {(isAdding || editingId) && (
         <div 
             className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200"
             style={{ zIndex: 9999, touchAction: 'none' }}
         >
             <div className="absolute inset-0 bg-transparent" onClick={() => { setIsAdding(false); setEditingId(null); }} />
-            <div className="bg-white mobile-modal-fix sm:w-auto sm:max-w-md sm:h-auto sm:max-h-[90vh] shadow-2xl relative z-10 animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-                <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 shrink-0">
+            <div className="bg-white w-full h-[90vh] sm:h-auto sm:w-full sm:max-w-md sm:max-h-[90vh] shadow-2xl relative z-10 animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-200 flex flex-col rounded-t-3xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 shrink-0 rounded-t-3xl sm:rounded-t-2xl">
                     <h3 className="font-black text-gray-800">{editingId ? 'Eintrag Bearbeiten' : 'Neue Ausgabe'}</h3>
                     <button onClick={() => { setIsAdding(false); setEditingId(null); }} className="p-2 hover:bg-gray-200 rounded-full text-gray-400"><X size={20} /></button>
                 </div>
-                <div className="p-4 space-y-4 mobile-modal-scroll">
+                
+                <div className="p-4 space-y-4 overflow-y-auto flex-1 min-h-0">
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
                         <input type="date" value={editingId ? (editForm.date || '') : (newExpense.date || '')} onChange={(e) => editingId ? setEditForm({...editForm, date: e.target.value}) : setNewExpense({...newExpense, date: e.target.value})} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-bold outline-none focus:ring-2 focus:ring-blue-100 max-w-full" />
@@ -997,7 +875,8 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                         <textarea value={editItemsText} onChange={(e) => setEditItemsText(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-base font-mono outline-none focus:ring-2 focus:ring-blue-100 h-32 max-w-full" placeholder="Milch: 1.90&#10;Brot: 3.50&#10;Oder einfach Notizen..." />
                     </div>
                 </div>
-                <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3 shrink-0 pb-safe w-full">
+                
+                <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3 shrink-0 pb-safe w-full rounded-b-none sm:rounded-b-2xl">
                     <button onClick={() => { setIsAdding(false); setEditingId(null); }} className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-200 rounded-xl transition-colors">Abbrechen</button>
                     <button onClick={editingId ? saveEdit : addExpense} disabled={!editingId && (!newExpense.amount || !newExpense.merchant)} className={`flex-1 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg shadow-blue-900/10 flex items-center justify-center gap-2 transition-all ${(!editingId && (!newExpense.amount || !newExpense.merchant)) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-800'}`}>
                         <Check size={18} /> Speichern
@@ -1013,97 +892,29 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               className="fixed inset-0 z-[100] flex items-center justify-center"
               onClick={(e) => e.stopPropagation()}
           >
-              {/* Desktop Backdrop: Semi-transparent Black / Mobile: Full Black */}
               <div 
                   className="absolute inset-0 bg-transparent cursor-pointer transition-colors"
                   onClick={closeReceiptModal}
               />
-
-              {/* Modal Container */}
-                            <div 
-                                    className="
-                                        relative 
-                                        w-full h-full flex flex-col 
-                                        bg-white
-                                        /* Mobile: Fullscreen with Safe Area Padding */
-                                        pt-[calc(env(safe-area-inset-top)+20px)]
-                                        /* Desktop: Centered Card */
-                                        md:w-auto md:max-w-5xl md:h-auto md:max-h-[85vh] 
-                                        md:rounded-3xl md:shadow-2xl md:border md:border-gray-200 md:pt-0
-                                        md:m-auto overflow-hidden
-                                    "
-                                    onClick={(e) => e.stopPropagation()}
-                            >
-                  {/* Close Button Mobile - Floating below safe area */}
-                  <button 
-                      onClick={closeReceiptModal} 
-                      className="absolute top-[calc(env(safe-area-inset-top)+20px)] right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-full transition-colors md:hidden"
-                  >
-                      <X size={24} />
-                  </button>
-
-                  {/* Desktop Header */}
+              <div className="relative w-full h-full flex flex-col bg-white pt-[calc(env(safe-area-inset-top)+20px)] md:w-auto md:max-w-5xl md:h-auto md:max-h-[85vh] md:rounded-3xl md:shadow-2xl md:border md:border-gray-200 md:pt-0 md:m-auto overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={closeReceiptModal} className="absolute top-[calc(env(safe-area-inset-top)+20px)] right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-full transition-colors md:hidden"><X size={24} /></button>
                   <div className="hidden md:flex items-center justify-between p-5 border-b border-gray-100 bg-white shrink-0">
-                      <h3 className="text-gray-800 font-black text-lg flex items-center gap-2">
-                          <FileText size={20} className="text-blue-600" />
-                          Beleg Vorschau
-                      </h3>
-                      <button onClick={closeReceiptModal} className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-colors">
-                          <X size={24} />
-                      </button>
+                      <h3 className="text-gray-800 font-black text-lg flex items-center gap-2"><FileText size={20} className="text-blue-600" /> Beleg Vorschau</h3>
+                      <button onClick={closeReceiptModal} className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-colors"><X size={24} /></button>
                   </div>
-
-                  {/* Main Image Area */}
                   <div className="flex-1 min-h-0 w-full flex items-center justify-center p-0 md:p-8 relative bg-black md:bg-gray-100 overflow-hidden">
                       {!viewingReceiptSrc && !receiptError && (
-                          <div className="flex flex-col items-center gap-4">
-                              <Loader2 size={48} className="animate-spin text-gray-400" />
-                              <p className="text-gray-500 font-bold text-sm">{statusMessage || "Lade Beleg..."}</p>
-                          </div>
+                          <div className="flex flex-col items-center gap-4"><Loader2 size={48} className="animate-spin text-gray-400" /><p className="text-gray-500 font-bold text-sm">{statusMessage || "Lade Beleg..."}</p></div>
                       )}
-                      
-                      {viewingReceiptSrc && (
-                          <img 
-                              src={viewingReceiptSrc} 
-                              alt="Beleg" 
-                              className="max-w-full max-h-full object-contain md:shadow-lg md:rounded-lg" 
-                          />
-                      )}
-
-                      {receiptError && (
-                          <div className="p-6 bg-red-900/80 border border-red-500/50 rounded-2xl text-center max-w-sm">
-                              <p className="text-red-200 font-bold">{receiptError}</p>
-                          </div>
-                      )}
+                      {viewingReceiptSrc && <img src={viewingReceiptSrc} alt="Beleg" className="max-w-full max-h-full object-contain md:shadow-lg md:rounded-lg" />}
+                      {receiptError && (<div className="p-6 bg-red-900/80 border border-red-500/50 rounded-2xl text-center max-w-sm"><p className="text-red-200 font-bold">{receiptError}</p></div>)}
                   </div>
-
-                  {/* Footer Actions */}
                   <div className="w-full p-6 pb-safe md:p-5 bg-white border-t border-gray-100 shrink-0">
                       {viewingReceiptSrc && (
                           <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-3">
-                              <a 
-                                  href={viewingReceiptSrc} 
-                                  download={`beleg_${new Date().toISOString()}.jpg`} 
-                                  className="w-full md:w-auto px-8 py-4 md:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
-                              >
-                                  <Save size={18}/> Sichern / Vorschau
-                              </a>
-                              
-                              {navigator.share && (
-                                  <button 
-                                      onClick={handleShare}
-                                      className="w-full md:w-auto px-8 py-4 md:py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
-                                  >
-                                      <Share2 size={18} /> Teilen
-                                  </button>
-                              )}
-
-                              <button 
-                                  onClick={closeReceiptModal} 
-                                  className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm transition-all md:hidden"
-                              >
-                                  Schliessen
-                              </button>
+                              <a href={viewingReceiptSrc} download={`beleg_${new Date().toISOString()}.jpg`} className="w-full md:w-auto px-8 py-4 md:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"><Save size={18}/> Sichern / Vorschau</a>
+                              {navigator.share && <button onClick={handleShare} className="w-full md:w-auto px-8 py-4 md:py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95"><Share2 size={18} /> Teilen</button>}
+                              <button onClick={closeReceiptModal} className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-sm transition-all md:hidden">Schliessen</button>
                           </div>
                       )}
                   </div>

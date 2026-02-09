@@ -1,6 +1,6 @@
 
 // GLOBAL CONSTANTS
-export const APP_VERSION = 'v5.0d';
+export const APP_VERSION = 'v5.0e';
 
 export interface Trade {
   pnl: number;
@@ -238,6 +238,22 @@ export interface ExpenseEntry {
   isTaxRelevant: boolean; // Flag if copied to tax
 }
 
+// --- NEW IN v5c: RECURRING EXPENSES (ABOS) ---
+export interface PriceHistory {
+    validFrom: string; // YYYY-MM-DD
+    amount: number;
+    currency: string;
+}
+
+export interface RecurringExpense {
+    id: string;
+    name: string; // "Netflix", "Spotify"
+    category: ExpenseCategory;
+    frequency: 'M' | 'Q' | 'Y';
+    paymentMonth?: number; // 1-12, needed for 'Q' (start month) or 'Y' (payment month)
+    history: PriceHistory[]; // Array of price changes
+}
+
 export interface AppData {
   trades: Record<string, DayEntry>;
   salary: Record<string, Record<string, SalaryEntry>>; // year -> month -> entry
@@ -268,4 +284,5 @@ export interface AppData {
   
   // New in v5b
   dailyExpenses: Record<string, ExpenseEntry[]>; // Key = Year (2025), Value = List of expenses
+  recurringExpenses?: RecurringExpense[]; // New in v5c: List of all recurring items
 }

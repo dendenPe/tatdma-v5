@@ -7,7 +7,8 @@ import {
   PiggyBank, 
   ArrowUpRight,
   PieChart as PieIcon,
-  Activity
+  Activity,
+  CreditCard
 } from 'lucide-react';
 import { AppData, PortfolioYear } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis } from 'recharts';
@@ -60,7 +61,55 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
   const totalNetIncome = salaryData.reduce((acc, entry) => acc + (entry.auszahlung || 0), 0);
   const totalGrossIncome = salaryData.reduce((acc, entry) => acc + (entry.brutto || 0), 0);
 
-  // 3. Trading Performance YTD & Win Rate Calculation
+  // 3. EXPENSES CALCULATION (YTD) - FIXED
+  const today = new Date();
+  const currentMonthIndex = today.getMonth(); // 0 = Jan, 1 = Feb...
+
+  // A. Daily Expenses Sum
+  const dailyExpList = data.dailyExpenses[currentYear] || [];
+  const dailyExpTotal = dailyExpList.reduce((sum, exp) => sum + (exp.amount * exp.rate), 0);
+
+  // B. Recurring Expenses Sum (YTD based on current month)
+  let recurringExpTotal = 0;
+  if (data.recurringExpenses) {
+      for(let m = 0; m <= currentMonthIndex; m++) {
+          data.recurringExpenses.forEach(rec => {
+             // Logic copy from ExpensesView
+             let isActive = false;
+             if (rec.frequency === 'M') isActive = true;
+             else if (rec.frequency === 'Q') {
+                 const startM = rec.paymentMonth || 1;
+                 const diff = m - (startM - 1);
+                 if (diff >= 0 && diff % 3 === 0) isActive = true;
+             }
+             else if (rec.frequency === 'Y') {
+                 if (m + 1 === (rec.paymentMonth || 1)) isActive = true;
+             }
+
+             if(isActive) {
+                 // Find valid price for this specific month
+                 const targetDate = new Date(parseInt(currentYear), m, 1);
+                 const history = [...rec.history].sort((a,b) => new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime());
+                 const activePrice = history.find(h => new Date(h.validFrom) <= targetDate);
+                 
+                 if(activePrice) {
+                     let r = 1;
+                     // Simple rate lookup (could be improved with historical rates but global static is fine for estimate)
+                     if(activePrice.currency === 'USD') r = data.tax.rateUSD || 0.85;
+                     if(activePrice.currency === 'EUR') r = data.tax.rateEUR || 0.94;
+                     recurringExpTotal += (activePrice.amount * r);
+                 }
+             }
+          });
+      }
+  }
+
+  const totalExpensesYTD = dailyExpTotal + recurringExpTotal;
+  const savingsRate = totalNetIncome > 0 
+      ? Math.round(((totalNetIncome - totalExpensesYTD) / totalNetIncome) * 100) 
+      : 0;
+
+  // 4. Trading Performance YTD & Win Rate Calculation
   const tradesYTD = Object.entries(data.trades).filter(([date]) => date.startsWith(currentYear));
   
   // Calculate PnL USD Total
@@ -125,17 +174,18 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
              icon={Wallet}
              color="green"
            />
+           {/* REPLACED TRADING CARD WITH EXPENSES CARD FOR BETTER OVERVIEW */}
            <StatCard 
-             label="Trading PnL (YTD)" 
-             value={`${tradePnlUSD.toLocaleString('de-CH', {maximumFractionDigits: 0})} $`} 
-             sub={`~ ${tradePnlCHF.toLocaleString('de-CH', {maximumFractionDigits:0})} CHF`}
-             icon={TrendingUp}
-             color={tradePnlUSD >= 0 ? 'green' : 'red'}
+             label="Ausgaben Total (YTD)" 
+             value={`${totalExpensesYTD.toLocaleString('de-CH', {maximumFractionDigits: 0})} CHF`} 
+             sub={`Davon Fix: ${recurringExpTotal.toLocaleString('de-CH', {maximumFractionDigits:0})}`}
+             icon={CreditCard}
+             color="red"
            />
            <StatCard 
-             label="Sparquote (Est.)" 
-             value={`${totalNetIncome > 0 ? Math.round(((totalNetIncome - 4000 * salaryData.length) / totalNetIncome) * 100) : 0}%`} 
-             sub="Basis: ~4k Ausgaben/Monat"
+             label="Sparquote (Real)" 
+             value={`${savingsRate}%`} 
+             sub={`Überschuss: ~ ${(totalNetIncome - totalExpensesYTD).toLocaleString('de-CH', {maximumFractionDigits:0})}`}
              icon={PiggyBank}
              color="purple"
            />
@@ -229,6 +279,15 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
                <p className="text-gray-500 text-xs">
                    {tradesYTD.length} Tage aktiv gehandelt.
                    <br/>Win Rate aktuell: <span className="text-green-600 font-bold">{winRate}%</span>
+               </p>
+           </div>
+           
+           <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative overflow-hidden group hover:border-purple-200 transition-colors">
+               <h4 className="font-bold text-gray-800 mb-1">Fixkosten Check</h4>
+               <p className="text-gray-500 text-xs">
+                   Durchschnittliche Fixkosten pro Monat (geschätzt):
+                   <br/>
+                   <span className="text-purple-600 font-bold text-lg mt-1 block">~ {(recurringExpTotal / (currentMonthIndex + 1)).toLocaleString('de-CH', {maximumFractionDigits: 0})} CHF</span>
                </p>
            </div>
        </div>
