@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, FileUp, Download, Eye, Paperclip, Calculator, ListFilter, Maximize2, Minimize2, Trash2, FileText, Check, X, User, Info } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileUp, Download, Eye, Paperclip, Calculator, ListFilter, Maximize2, Minimize2, Trash2, FileText, Check, X, User, Info, Pencil } from 'lucide-react';
 import { AppData, SalaryEntry, SalaryCertificateData } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';
@@ -16,6 +16,7 @@ const SalaryView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const [isDetailed, setIsDetailed] = useState(false);
   const [showCertModal, setShowCertModal] = useState(false);
   const [activeCertTab, setActiveCertTab] = useState<'p1' | 'p2'>('p1');
+  const [editingMonthIdx, setEditingMonthIdx] = useState<number | null>(null);
   
   // Sync with global year
   useEffect(() => {
@@ -252,7 +253,7 @@ const SalaryView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                     {col.label}
                   </th>
                 ))}
-                <th className="px-4 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px] w-16 lg:w-24 text-center">PDF</th>
+                <th className="px-4 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px] w-24 lg:w-32 text-center">Aktionen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -277,6 +278,10 @@ const SalaryView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                     ))}
                     <td className="px-2 lg:px-4 py-3 text-center">
                       <div className="flex justify-center gap-1 group/btn">
+                         <button onClick={() => setEditingMonthIdx(idx)} className="p-1.5 lg:p-2 bg-gray-50 text-gray-400 rounded-lg hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Details & Bearbeiten">
+                            <Pencil size={14} />
+                         </button>
+                         <div className="w-px h-4 bg-gray-200 mx-1"></div>
                          {e.pdfFilename ? (
                             <>
                                 <button onClick={() => viewPdf(e.pdfFilename!)} className="p-1.5 lg:p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100" title="Ansehen">
@@ -399,6 +404,85 @@ const SalaryView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
            </div>
         </div>
       </div>
+
+      {/* EDIT ENTRY MODAL */}
+      {editingMonthIdx !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                  <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+                      <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                          <Pencil size={18} className="text-blue-600"/>
+                          {months[editingMonthIdx]} {year}
+                      </h3>
+                      <button onClick={() => setEditingMonthIdx(null)}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                  </div>
+                  
+                  <div className="p-6 overflow-y-auto space-y-6">
+                      {/* Einkommen Section */}
+                      <div>
+                          <h4 className="text-xs font-black text-blue-500 uppercase tracking-widest mb-3 border-b border-blue-100 pb-1">Einkommen & Zulagen</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Monatslohn</label><input type="number" value={getEntry(editingMonthIdx).monatslohn} onChange={(e) => updateEntry(editingMonthIdx, 'monatslohn', parseFloat(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Familienzulage</label><input type="number" value={getEntry(editingMonthIdx).familienzulage} onChange={(e) => updateEntry(editingMonthIdx, 'familienzulage', parseFloat(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Spesen</label><input type="number" value={getEntry(editingMonthIdx).pauschalspesen} onChange={(e) => updateEntry(editingMonthIdx, 'pauschalspesen', parseFloat(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Aufrechnung</label><input type="number" value={getEntry(editingMonthIdx).aufrechnung} onChange={(e) => updateEntry(editingMonthIdx, 'aufrechnung', parseFloat(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Korrektur (+/-)</label><input type="number" value={getEntry(editingMonthIdx).korrektur} onChange={(e) => updateEntry(editingMonthIdx, 'korrektur', parseFloat(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-blue-100"/></div>
+                          </div>
+                      </div>
+
+                      {/* Abzüge Section */}
+                      <div>
+                          <h4 className="text-xs font-black text-red-500 uppercase tracking-widest mb-3 border-b border-red-100 pb-1">Sozialabzüge</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">AHV/IV/EO</label><input type="number" value={getEntry(editingMonthIdx).ahv} onChange={(e) => updateEntry(editingMonthIdx, 'ahv', parseFloat(e.target.value))} className="w-full bg-red-50/30 border border-red-100 rounded-lg px-3 py-2 font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">ALV</label><input type="number" value={getEntry(editingMonthIdx).alv} onChange={(e) => updateEntry(editingMonthIdx, 'alv', parseFloat(e.target.value))} className="w-full bg-red-50/30 border border-red-100 rounded-lg px-3 py-2 font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">S-Fond/KTG/UVG</label><input type="number" value={getEntry(editingMonthIdx).sozialfond} onChange={(e) => updateEntry(editingMonthIdx, 'sozialfond', parseFloat(e.target.value))} className="w-full bg-red-50/30 border border-red-100 rounded-lg px-3 py-2 font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">BVG / PK</label><input type="number" value={getEntry(editingMonthIdx).bvg} onChange={(e) => updateEntry(editingMonthIdx, 'bvg', parseFloat(e.target.value))} className="w-full bg-red-50/30 border border-red-100 rounded-lg px-3 py-2 font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-100"/></div>
+                              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-gray-400">Quellensteuer</label><input type="number" value={getEntry(editingMonthIdx).quellensteuer} onChange={(e) => updateEntry(editingMonthIdx, 'quellensteuer', parseFloat(e.target.value))} className="w-full bg-red-50/30 border border-red-100 rounded-lg px-3 py-2 font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-100"/></div>
+                          </div>
+                      </div>
+
+                      {/* Notizen & Anhang */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">Kommentar / Notiz</h4>
+                              <textarea 
+                                  value={getEntry(editingMonthIdx).kommentar || ''}
+                                  onChange={(e) => updateEntry(editingMonthIdx, 'kommentar', e.target.value)}
+                                  className="w-full h-24 bg-yellow-50 border border-yellow-100 rounded-lg p-3 text-sm resize-none outline-none focus:ring-2 focus:ring-yellow-200"
+                                  placeholder="Notizen zur Abrechnung..."
+                              />
+                          </div>
+                          <div className="space-y-2">
+                              <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">PDF Beleg</h4>
+                              <div className="h-24 border-2 border-dashed border-gray-200 rounded-lg flex flex-col items-center justify-center bg-gray-50/50">
+                                  {getEntry(editingMonthIdx).pdfFilename ? (
+                                      <div className="flex flex-col items-center gap-2">
+                                          <span className="text-xs font-bold text-blue-600">Beleg vorhanden</span>
+                                          <div className="flex gap-2">
+                                              <button onClick={() => viewPdf(getEntry(editingMonthIdx).pdfFilename!)} className="px-3 py-1 bg-blue-100 text-blue-600 rounded text-xs font-bold hover:bg-blue-200">Ansehen</button>
+                                              <button onClick={() => deletePdf(editingMonthIdx)} className="px-3 py-1 bg-red-100 text-red-600 rounded text-xs font-bold hover:bg-red-200">Löschen</button>
+                                          </div>
+                                      </div>
+                                  ) : (
+                                      <button onClick={() => triggerUpload(editingMonthIdx)} className="text-gray-400 hover:text-blue-500 flex flex-col items-center gap-1">
+                                          <Paperclip size={20} />
+                                          <span className="text-xs font-bold">PDF Hochladen</span>
+                                      </button>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end">
+                      <button onClick={() => setEditingMonthIdx(null)} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-blue-800 transition-all shadow-lg shadow-blue-900/10 flex items-center gap-2">
+                          <Check size={16} /> Fertig
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* CERTIFICATE MODAL */}
       {showCertModal && (

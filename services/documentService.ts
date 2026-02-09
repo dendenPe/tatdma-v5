@@ -1,3 +1,4 @@
+
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-ignore
 import { createWorker } from 'tesseract.js';
@@ -18,7 +19,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/buil
 
 export class DocumentService {
 
-  // Updated Keywords for new categorization
   private static defaultRules: Record<string, DocCategory> = {
     'pass': 'Identität & Zivilstand', 'ausweis': 'Identität & Zivilstand', 'urkunde': 'Identität & Zivilstand', 'zivilstand': 'Identität & Zivilstand',
     'zeugnis': 'Bildung & Qualifikation', 'diplom': 'Bildung & Qualifikation', 'zertifikat': 'Bildung & Qualifikation', 'kurs': 'Bildung & Qualifikation',
@@ -37,6 +37,35 @@ export class DocumentService {
     'software': 'Technik & IT', 'lizenz': 'Technik & IT', 'handbuch': 'Technik & IT', 'anleitung': 'Technik & IT', 'passwort': 'Technik & IT'
   };
 
+  /**
+   * ROBUST FILE SIGNATURE DETECTION (Magic Bytes)
+   */
+  static async detectRealMimeType(blob: Blob): Promise<string> {
+      return new Promise((resolve) => {
+          const fileReader = new FileReader();
+          fileReader.onloadend = function(e) {
+              if (!e.target || !e.target.result) {
+                  resolve(blob.type || '');
+                  return;
+              }
+              const arr = (new Uint8Array(e.target.result as ArrayBuffer)).subarray(0, 4);
+              let header = "";
+              for(let i = 0; i < arr.length; i++) {
+                  header += arr[i].toString(16).toUpperCase();
+              }
+
+              if (header.startsWith('25504446')) { resolve('application/pdf'); return; }
+              if (header.startsWith('504B0304')) { resolve('application/zip'); return; }
+              if (header.startsWith('D0CF11E0')) { resolve('application/msword'); return; }
+              if (header.startsWith('FFD8FF')) { resolve('image/jpeg'); return; }
+              if (header.startsWith('89504E47')) { resolve('image/png'); return; }
+              
+              resolve(blob.type || '');
+          };
+          fileReader.readAsArrayBuffer(blob.slice(0, 4));
+      });
+  }
+
   static async performOCR(blob: Blob): Promise<string> {
       try {
           const worker = await createWorker('deu'); 
@@ -44,8 +73,7 @@ export class DocumentService {
           await worker.terminate();
           return ret.data.text;
       } catch (e) { 
-          // Tesseract fails on HEIC usually or corrupted images
-          console.warn("OCR failed (possibly unsupported format like HEIC in this browser):", e);
+          console.warn("OCR failed:", e);
           return ""; 
       }
   }
@@ -89,7 +117,6 @@ export class DocumentService {
       let fullText = '';
       const maxPages = Math.min(pdf.numPages, 3); 
       
-      // 1. Try standard text extraction
       for (let i = 1; i <= maxPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
@@ -98,12 +125,11 @@ export class DocumentService {
         fullText += pageText + '\n'; 
       }
 
-      // 2. If text is extremely short (e.g. Scanned PDF / Image in PDF), try OCR on the first page
       if (fullText.trim().length < 50) {
-          console.log("PDF text empty, attempting OCR on PDF Page 1...");
+          console.log("PDF seems to be an image, trying OCR...");
           try {
               const page = await pdf.getPage(1);
-              const viewport = page.getViewport({ scale: 2.0 }); // High res for OCR
+              const viewport = page.getViewport({ scale: 2.0 });
               const canvas = document.createElement('canvas');
               const context = canvas.getContext('2d');
               canvas.height = viewport.height;
@@ -112,8 +138,6 @@ export class DocumentService {
               if (context) {
                   // @ts-ignore
                   await page.render({ canvasContext: context, viewport: viewport }).promise;
-                  
-                  // Convert canvas to blob for OCR
                   const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
                   if (blob) {
                       const ocrText = await this.performOCR(blob);
@@ -128,7 +152,7 @@ export class DocumentService {
       return fullText;
     } catch (e) { 
         console.error("PDF extract error", e);
-        return ""; 
+        return "PDF Inhalt konnte nicht gelesen werden."; 
     }
   }
 
@@ -160,32 +184,32 @@ export class DocumentService {
 
   static async processFile(file: File | Blob, userRules: Record<string, string[]> = {}, fileNameOverride?: string, forcedMetadata?: { year?: string, category?: string }): Promise<NoteDocument> {
     const name = fileNameOverride || (file as File).name || 'Unknown';
-    const ext = name.split('.').pop()?.toLowerCase() || '';
+    const ext = name.split('.').pop()?.trim().toLowerCase() || '';
+    
+    // DETECT TYPE WITH PDF PRIORITY
+    let realMimeType = await this.detectRealMimeType(file);
+    
+    // Force PDF if extension says PDF (Overrules weak magic byte detection that might say octet-stream)
+    if (ext === 'pdf') realMimeType = 'application/pdf';
+
+    console.log(`Processing ${name}: Detected Signature: ${realMimeType}, Extension: ${ext}`);
+
     let content = "";
     let docType: NoteDocument['type'] = 'other';
-    
-    // Explicit Type Check or Ext Check
-    const type = file.type || '';
 
-    // Improved Type Detection with fallback for empty MIME types (HEIC)
-    if (type === 'application/pdf' || ext === 'pdf') {
+    if (realMimeType === 'application/pdf' || ext === 'pdf') {
         docType = 'pdf';
         content = await this.extractTextFromPdf(file);
     } 
-    else if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'heic', 'webp', 'heif'].includes(ext)) {
+    else if (realMimeType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'heic', 'webp'].includes(ext)) {
         docType = 'image';
-        // Only attempt OCR if not HEIC, or if browser supports it. 
-        // We wrap in try/catch in performOCR anyway.
         content = await this.performOCR(file);
-        if (!content && (ext === 'heic' || ext === 'heif')) {
-            content = "[HEIC Image - Inhalt nur via AI sichtbar]";
-        }
     }
-    else if (['doc', 'docx'].includes(ext) || type.includes('word')) {
+    else if (realMimeType === 'application/msword' || ext === 'doc' || ext === 'docx') {
         docType = 'word';
         content = await this.extractTextFromWord(file);
     }
-    else if (['xls', 'xlsx', 'csv'].includes(ext) || type.includes('spreadsheet') || type.includes('excel')) {
+    else if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') {
         docType = 'excel';
         content = await this.extractTextFromExcel(file);
     }
@@ -193,7 +217,10 @@ export class DocumentService {
         docType = 'note';
         try { content = await file.text(); } catch {}
     }
-    else { content = name; }
+    else { 
+        content = name; 
+        if(ext === 'pdf') docType = 'pdf'; 
+    }
 
     const category = forcedMetadata?.category || this.categorizeText(content, name, userRules);
     const year = forcedMetadata?.year || this.extractYear(content) || new Date().getFullYear().toString();
@@ -260,8 +287,9 @@ export class DocumentService {
 
   static async scanInbox(
       currentNotes: Record<string, NoteDocument>, 
-      userRules: Record<string, string[]> = {}
-  ): Promise<{ newDocs: NoteDocument[], movedCount: number, newTaxExpenses: TaxExpense[], newDailyExpenses: ExpenseEntry[] }> {
+      userRules: Record<string, string[]> = {},
+      useAI: boolean = false
+  ): Promise<{ newDocs: NoteDocument[], movedCount: number, newTaxExpenses: TaxExpense[], newDailyExpenses: ExpenseEntry[], newSalaryData: any[] }> {
     
     if (!VaultService.isConnected()) throw new Error("Vault not connected");
     const root = await VaultService.getDirHandle();
@@ -275,23 +303,33 @@ export class DocumentService {
     const newDocs: NoteDocument[] = [];
     const newTaxExpenses: TaxExpense[] = [];
     const newDailyExpenses: ExpenseEntry[] = [];
+    const newSalaryData: any[] = [];
     let movedCount = 0;
 
     // @ts-ignore
     for await (const entry of inboxHandle.values()) {
         if (entry.kind === 'file' && entry.name !== '.DS_Store') {
+            
+            // ARTIFICIAL DELAY TO PREVENT RATE LIMITING
+            if (useAI) {
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 2s delay between files
+            }
+
             const fileHandle = entry as FileSystemFileHandle;
             const file = await fileHandle.getFile();
             if (file.size > 50 * 1024 * 1024) continue;
 
             try {
-                // 1. ANALYZE WITH GEMINI
-                const aiResult = await GeminiService.analyzeDocument(file);
-                
                 let finalDoc: NoteDocument;
                 let finalCategory: string;
                 let finalSubCategory: string | undefined;
                 let finalYear: string;
+                
+                let aiResult = null;
+
+                if (useAI) {
+                    aiResult = await GeminiService.analyzeDocument(file);
+                }
 
                 if (aiResult) {
                     finalCategory = aiResult.category || 'Sonstiges';
@@ -300,80 +338,77 @@ export class DocumentService {
                     
                     const id = `doc_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
                     
-                    // Determine Type manually if file.type is empty (HEIC fix)
+                    // Determine Type (Robust PDF Check)
                     let docType: NoteDocument['type'] = 'other';
                     const ext = file.name.split('.').pop()?.toLowerCase();
                     const mime = file.type || '';
-                    if (mime.includes('pdf') || ext === 'pdf') docType = 'pdf';
-                    else if (mime.startsWith('image/') || ['jpg','jpeg','png','heic','webp','heif'].includes(ext || '')) docType = 'image';
+                    if (ext === 'pdf' || mime.includes('pdf')) docType = 'pdf';
+                    else if (['jpg','jpeg','png','heic','webp','heif'].includes(ext || '') || mime.startsWith('image/')) docType = 'image';
 
-                    // --- GENERATE RICH HTML CONTENT FOR NOTE ---
                     let contentHtml = aiResult.summary || "Automatisch analysiert durch AI.";
                     
-                    if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
-                        const d = aiResult.dailyExpenseData;
-                        const itemListHtml = d.items ? d.items.map(i => `
-                            <tr>
-                                <td style="padding:2px 0;">${i.name}</td>
-                                <td style="text-align:right; font-weight:bold;">${i.price.toFixed(2)}</td>
-                            </tr>`).join('') : '';
-
-                        contentHtml += `
-                        <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
-                            <strong style="font-size:11px; text-transform:uppercase; color:#666;">Beleg Details:</strong><br/>
-                            <table style="width:100%; font-size:13px; margin-top:5px;">
-                                <tr><td style="color:#888;">Händler:</td><td><strong>${d.merchant}</strong></td></tr>
-                                <tr><td style="color:#888;">Total:</td><td style="color:#16a34a;"><strong>${d.amount.toFixed(2)} ${d.currency}</strong></td></tr>
-                                <tr><td style="color:#888;">Kategorie:</td><td>${d.expenseCategory}</td></tr>
-                            </table>
-                            ${itemListHtml ? `
-                            <div style="margin-top:10px; background:#f9fafb; padding:8px; border-radius:6px;">
-                                <table style="width:100%; font-size:12px; color:#4b5563;">
-                                    ${itemListHtml}
-                                </table>
-                            </div>` : ''}
-                        </div>`;
-                    }
-
                     const dbId = `receipt_auto_${Date.now()}`;
                     await DBService.saveFile(dbId, file);
 
-                    // Create Expense if AI says so
-                    let generatedExpenseId = undefined;
-                    if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
-                        const expense = aiResult.dailyExpenseData;
-                        generatedExpenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+                    // LOGIC: Salary vs Tax vs Daily
+                    if (aiResult.salaryData && aiResult.salaryData.isSalary) {
+                        // SALARY / INCOME IMPORT
+                        const s = aiResult.salaryData;
+                        newSalaryData.push({
+                            year: s.year,
+                            month: s.month, 
+                            data: {
+                                monatslohn: s.netIncome || 0,
+                                brutto: s.grossIncome || 0,
+                                ahv: s.ahv || 0,
+                                alv: s.alv || 0,
+                                bvg: s.bvg || 0,
+                                quellensteuer: s.tax || 0,
+                                auszahlung: s.payout || 0,
+                                pdfFilename: dbId,
+                                kommentar: `Importiert: ${aiResult.title}`
+                            }
+                        });
+                        contentHtml += `<div style="color:green; font-weight:bold; margin-top:10px;">✅ Als Einnahme erkannt.</div>`;
+                    
+                    } else {
+                        // ONLY IF NOT SALARY -> CHECK FOR EXPENSES
                         
-                        newDailyExpenses.push({
-                            id: generatedExpenseId,
-                            date: aiResult.date || new Date().toISOString().split('T')[0],
-                            merchant: expense.merchant || 'Unbekannt',
-                            description: aiResult.title,
-                            amount: expense.amount || 0,
-                            currency: expense.currency || 'CHF',
-                            rate: 1, 
-                            category: (expense.expenseCategory as any) || 'Sonstiges',
-                            location: expense.location,
-                            receiptId: dbId,
-                            isTaxRelevant: aiResult.isTaxRelevant,
-                            items: expense.items // PASS THE EXTRACTED ITEMS (Array of Objects)
-                        });
+                        if (aiResult.dailyExpenseData && aiResult.dailyExpenseData.isExpense) {
+                            const d = aiResult.dailyExpenseData;
+                            const generatedExpenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+                            newDailyExpenses.push({
+                                id: generatedExpenseId,
+                                date: aiResult.date || new Date().toISOString().split('T')[0],
+                                merchant: d.merchant || 'Unbekannt',
+                                description: aiResult.title,
+                                amount: d.amount || 0,
+                                currency: d.currency || 'CHF',
+                                rate: 1, 
+                                category: (d.expenseCategory as any) || 'Sonstiges',
+                                location: d.location,
+                                receiptId: dbId,
+                                isTaxRelevant: aiResult.isTaxRelevant,
+                                items: d.items
+                            });
+                            contentHtml += `<div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;"><strong style="font-size:11px;">Beleg Details:</strong><br/>${d.merchant} - ${d.amount.toFixed(2)} ${d.currency}</div>`;
+                        }
+                        
+                        if (aiResult.isTaxRelevant && aiResult.taxData) {
+                            newTaxExpenses.push({
+                                desc: aiResult.title || file.name,
+                                amount: aiResult.taxData.amount || 0,
+                                currency: aiResult.taxData.currency || 'CHF',
+                                cat: (aiResult.taxData.taxCategory as any) || 'Sonstiges',
+                                year: finalYear,
+                                rate: 1, 
+                                receipts: [dbId],
+                                taxRelevant: true
+                            });
+                            contentHtml += `<div style="color:blue; font-weight:bold; margin-top:5px;">📋 Als Steuerabzug markiert.</div>`;
+                        }
                     }
 
-                    if (aiResult.isTaxRelevant && aiResult.taxData) {
-                        newTaxExpenses.push({
-                            desc: aiResult.title || file.name,
-                            amount: aiResult.taxData.amount || 0,
-                            currency: aiResult.taxData.currency || 'CHF',
-                            cat: (aiResult.taxData.taxCategory as any) || 'Sonstiges',
-                            year: finalYear,
-                            rate: 1, 
-                            receipts: [dbId],
-                            taxRelevant: true
-                        });
-                    }
-
-                    // Create Final Doc with links
                     finalDoc = {
                         id,
                         title: aiResult.title || file.name,
@@ -382,13 +417,11 @@ export class DocumentService {
                         subCategory: finalSubCategory,
                         year: finalYear,
                         created: new Date().toISOString(),
-                        content: contentHtml, // Use rich HTML
+                        content: contentHtml,
                         fileName: file.name,
                         tags: ['AI-Scanned'],
                         isNew: true,
                         taxRelevant: aiResult.isTaxRelevant,
-                        isExpense: !!generatedExpenseId,
-                        expenseId: generatedExpenseId
                     };
 
                 } else {
@@ -426,13 +459,12 @@ export class DocumentService {
 
             } catch (err) { 
                 console.error(`Failed to move ${file.name}`, err); 
+                // Do not throw here, allow other files to be processed
             }
         }
     }
-    return { newDocs, movedCount, newTaxExpenses, newDailyExpenses };
+    return { newDocs, movedCount, newTaxExpenses, newDailyExpenses, newSalaryData };
   }
-
-  // --- IMPLEMENTED: REBUILD INDEX & GET FILE FROM VAULT ---
 
   static async rebuildIndexFromVault(): Promise<NoteDocument[]> {
       if (!VaultService.isConnected()) return [];
@@ -443,15 +475,12 @@ export class DocumentService {
       // @ts-ignore
       const archiveHandle = await root.getDirectoryHandle('_ARCHIVE', { create: true });
 
-      // Recursive scanner
       const scanDir = async (dirHandle: FileSystemDirectoryHandle, pathPrefix: string, year: string, category: string, subCategory?: string) => {
           // @ts-ignore
           for await (const entry of dirHandle.values()) {
               if (entry.kind === 'file' && entry.name !== '.DS_Store') {
                   const fileHandle = entry as FileSystemFileHandle;
                   const file = await fileHandle.getFile();
-                  
-                  // Re-process metadata without OCR if possible for speed
                   const forcedMeta = { year, category };
                   const doc = await this.processFile(file, {}, file.name, forcedMeta);
                   
@@ -459,18 +488,13 @@ export class DocumentService {
                   doc.filePath = `${pathPrefix}/${file.name}`;
                   docs.push(doc);
               } else if (entry.kind === 'directory') {
-                  // Traverse deeper
-                  // Structure: _ARCHIVE / YEAR / CAT / [SUBCAT]
-                  // If we are at root archive, entry is YEAR
                   // @ts-ignore
                   const dirEntry = entry as FileSystemDirectoryHandle;
                   if (pathPrefix === '_ARCHIVE') {
                       await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, entry.name, 'Sonstiges');
                   } else if (pathPrefix.split('/').length === 2) {
-                      // Inside Year, entry is CAT
                       await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, year, entry.name);
                   } else if (pathPrefix.split('/').length === 3) {
-                      // Inside Cat, entry is SUBCAT
                       await scanDir(dirEntry, `${pathPrefix}/${entry.name}`, year, category, entry.name);
                   }
               }
@@ -509,11 +533,8 @@ export class DocumentService {
       await writable.write(fileBlob);
       await writable.close();
 
-      // Delete old file (Best effort, path parsing)
       try {
           const oldPathParts = doc.filePath.split('/');
-          // _ARCHIVE / YEAR / CAT / [SUB] / FILE
-          // Navigate to parent of file
           let currentDir = root;
           for(let i=0; i<oldPathParts.length - 1; i++) {
               // @ts-ignore
@@ -533,28 +554,58 @@ export class DocumentService {
       return doc;
   }
 
+  /**
+   * UPDATED GET FILE LOGIC (ROBUST SEARCH)
+   * If exact match fails, iterates directory to find fuzzy match (Unicode NFD/NFC discrepancies).
+   */
   static async getFileFromVault(filePath: string): Promise<Blob | null> {
       if (!VaultService.isConnected()) return null;
       const root = await VaultService.getDirHandle();
       if (!root) return null;
 
+      const parts = filePath.split('/');
+      const fileName = parts.pop(); // Remove filename from path array
+      if (!fileName) return null;
+
+      let currentDir = root;
+      
       try {
-          const parts = filePath.split('/');
-          let currentDir = root;
-          
-          // Navigate folders
-          for (let i = 0; i < parts.length - 1; i++) {
+          // Navigate to parent folder
+          for (const part of parts) {
               // @ts-ignore
-              currentDir = await currentDir.getDirectoryHandle(parts[i]);
+              currentDir = await currentDir.getDirectoryHandle(part);
           }
           
-          // Get File
-          const fileName = parts[parts.length - 1];
+          // TRY 1: Exact Match
+          try {
+              // @ts-ignore
+              const fileHandle = await currentDir.getFileHandle(fileName);
+              return await fileHandle.getFile();
+          } catch (err) {
+              console.warn(`Exact match failed for ${fileName}, searching directory...`);
+          }
+
+          // TRY 2: Fuzzy Match (Unicode Normalization)
           // @ts-ignore
-          const fileHandle = await currentDir.getFileHandle(fileName);
-          return await fileHandle.getFile();
+          for await (const entry of currentDir.values()) {
+              if (entry.kind === 'file') {
+                  const entryName = entry.name.normalize('NFC').trim();
+                  const searchName = fileName.normalize('NFC').trim();
+                  
+                  if (entryName === searchName) {
+                      console.log(`Fuzzy match found: ${entry.name}`);
+                      // @ts-ignore
+                      const fileHandle = entry as FileSystemFileHandle;
+                      return await fileHandle.getFile();
+                  }
+              }
+          }
+          
+          console.error("File not found in vault after fuzzy search:", filePath);
+          return null;
+
       } catch (e) {
-          console.error("File not found in vault:", filePath, e);
+          console.error("Directory navigation failed:", filePath, e);
           return null;
       }
   }

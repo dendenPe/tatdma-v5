@@ -50,7 +50,8 @@ import {
   Share2,
   Printer,
   Maximize2,
-  Minimize2
+  Minimize2,
+  AlertTriangle
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { AppData, NoteDocument, DocCategory, TaxExpense, CATEGORY_STRUCTURE, ExpenseEntry } from '../types';
@@ -69,6 +70,7 @@ if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
 interface Props {
   data: AppData;
   onUpdate: (data: AppData) => void;
+  isVaultConnected?: boolean;
 }
 
 // Map the new constant to UI friendly definition
@@ -92,6 +94,30 @@ const stripHtml = (html: string) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    return tmp.textContent || tmp.innerText || "";
+};
+
+// --- HELPER: Parse Search Query ---
+const parseSearchQuery = (query: string) => {
+    if (!query) return { mode: 'OR', terms: [] };
+    
+    // Check for AND condition (;)
+    if (query.includes(';')) {
+        return { 
+            mode: 'AND', 
+            terms: query.split(';').map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
+        };
+    }
+    
+    // Check for OR condition (/)
+    if (query.includes('/')) {
+        return { 
+            mode: 'OR', 
+            terms: query.split('/').map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
+        };
+    }
+
+    // Default single term
+    return { mode: 'OR', terms: [query.trim().toLowerCase()] };
 };
 
 // --- SUB-COMPONENT: PDF PAGE RENDERER WITH OPTIONAL LENS ---
@@ -151,28 +177,39 @@ const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale
                     await renderTask.promise;
                     renderTaskRef.current = null; // Clear ref on success
 
-                    // --- HIGHLIGHTING LOGIC ---
-                    if (searchQuery && searchQuery.length > 2) {
+                    // --- HIGHLIGHTING LOGIC (MULTI TERM) ---
+                    const { terms } = parseSearchQuery(searchQuery);
+
+                    if (terms.length > 0) {
                         const textContent = await page.getTextContent();
-                        const query = searchQuery.toLowerCase();
                         
                         context.save();
                         context.scale(outputScale, outputScale);
 
                         textContent.items.forEach((item: any) => {
-                            if (item.str.toLowerCase().includes(query)) {
+                            const itemStr = item.str.toLowerCase();
+                            // Check if ANY of the search terms matches this text block
+                            const isMatch = terms.some(term => itemStr.includes(term));
+
+                            if (isMatch) {
+                                // PDF coordinates are complex. We use pdfjsLib.Util.transform to map them to viewport.
+                                // item.transform is [scaleX, skewY, skewX, scaleY, x, y]
                                 const tx = pdfjsLib.Util.transform(
                                     viewport.transform,
                                     item.transform
                                 );
                                 
+                                // Calculate dimensions
                                 const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3]));
+                                const itemWidth = item.width * scale; // Approximation based on width in PDF units * scale
                                 
-                                context.fillStyle = 'rgba(255, 255, 0, 0.4)';
+                                // Draw Highlight
+                                // Note: tx[5] is usually baseline. We go up by fontHeight.
+                                context.fillStyle = 'rgba(255, 255, 0, 0.4)'; // Transparent Yellow
                                 context.fillRect(
                                     tx[4], 
-                                    tx[5] - fontHeight * 0.8,
-                                    item.width * scale, 
+                                    tx[5] - fontHeight * 0.8, // Adjust y to cover text height
+                                    itemWidth, 
                                     fontHeight
                                 );
                             }
@@ -302,7 +339,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
 };
 
 
-const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
+const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [selectedCat, setSelectedCat] = useState<string | 'All'>('All');
   const [selectedSubCat, setSelectedSubCat] = useState<string | null>(null); // Sidebar filter for subcat
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,6 +356,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   
   // File Preview State
   const [activeFileBlob, setActiveFileBlob] = useState<Blob | null>(null);
+  const [fileLoadError, setFileLoadError] = useState<string | null>(null); // NEW: Error State
   const [isLensEnabled, setIsLensEnabled] = useState(false); // Zoom Lens Toggle
   const [isMaximized, setIsMaximized] = useState(false); // FULLSCREEN TOGGLE
   
@@ -426,10 +464,20 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
           return note.category === 'Inbox';
       }
 
-      const cleanContent = stripHtml(note.content).toLowerCase();
-      const matchesSearch = !searchQuery || 
-        note.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        cleanContent.includes(searchQuery.toLowerCase());
+      // --- NEW MULTI KEYWORD LOGIC ---
+      const cleanContent = (note.title + " " + stripHtml(note.content)).toLowerCase();
+      const { mode, terms } = parseSearchQuery(searchQuery);
+      
+      let matchesSearch = true;
+      if (terms.length > 0) {
+          if (mode === 'AND') {
+              // ALL terms must be present
+              matchesSearch = terms.every(term => cleanContent.includes(term));
+          } else {
+              // ANY term must be present (OR)
+              matchesSearch = terms.some(term => cleanContent.includes(term));
+          }
+      }
       
       return matchesMainCat && matchesSubCat && matchesSearch;
     });
@@ -437,32 +485,71 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
 
-  // --- EFFECT: LOAD FILE BLOB ON SELECTION ---
+  // --- ROBUST FILE HANDLING (FIXED: Force correct MIME Types & FRESH FETCH) ---
+  const resolveFileBlob = async (note: NoteDocument): Promise<Blob | null> => {
+      let blob: Blob | null = null;
+      try {
+          blob = await DBService.getFile(note.id);
+      } catch (e) { /* ignore */ }
+
+      if (!blob && note.filePath && VaultService.isConnected()) {
+          blob = await DocumentService.getFileFromVault(note.filePath);
+      }
+      
+      // FORCE CORRECT MIME TYPE IF MISSING
+      if (blob) {
+          let type = blob.type;
+          
+          if (note.type === 'pdf') type = 'application/pdf';
+          else if (note.type === 'image') type = 'image/jpeg';
+          
+          // If type is missing or generic, enforce it based on metadata
+          if (!type || type === 'application/octet-stream' || type === 'application/vnd.ms-excel') {
+             if (note.fileName?.toLowerCase().endsWith('.pdf')) type = 'application/pdf';
+             else if (note.fileName?.toLowerCase().match(/\.(jpg|jpeg|png)$/)) type = 'image/jpeg';
+          }
+
+          if (blob.type !== type) {
+              console.log(`Fixing Blob Type: ${blob.type} -> ${type}`);
+              blob = new Blob([blob], { type });
+          }
+      }
+      return blob;
+  };
+
+  const ensureFileBlob = async (): Promise<Blob | null> => {
+      if (!selectedNote) return null;
+      if (activeFileBlob) return activeFileBlob; 
+      const blob = await resolveFileBlob(selectedNote);
+      if(blob) setActiveFileBlob(blob);
+      return blob;
+  };
+
+  // --- EFFECT: LOAD FILE BLOB ON SELECTION (FIXED STALE CLOSURE) ---
   useEffect(() => {
       const loadBlob = async () => {
+          if (!selectedNote) {
+              setActiveFileBlob(null);
+              return;
+          }
+          
           setActiveFileBlob(null);
-          // On selection change, reset maximize
+          setFileLoadError(null);
           setIsMaximized(false);
           
-          if (selectedNote) {
-              const blob = await ensureFileBlob();
-              // No need to set activeFileBlob again as ensureFileBlob does it
+          if (selectedNote.type === 'pdf' || selectedNote.type === 'image') {
+              const blob = await resolveFileBlob(selectedNote);
+              if (blob) {
+                  setActiveFileBlob(blob);
+              } else {
+                  if (VaultService.isConnected()) {
+                      setFileLoadError("Datei konnte im Archiv nicht gefunden werden.");
+                  }
+              }
           }
       };
       loadBlob();
-  }, [selectedNoteId]);
-
-  // --- AUTOMATIC SCAN ON MOUNT ---
-  useEffect(() => {
-    if (VaultService.isConnected()) {
-        const timer = setTimeout(() => {
-            if (!isScanning) {
-                handleScanInbox(false); 
-            }
-        }, 800);
-        return () => clearTimeout(timer);
-    }
-  }, []); 
+  }, [selectedNote, isVaultConnected]); 
 
   // --- EDITOR SYNC (Fix for Backwards Typing) ---
   useEffect(() => {
@@ -480,29 +567,48 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   }, [selectedNoteId, data.notes]);
 
-  // --- SEARCH CONTEXT HELPER ---
+  // --- SEARCH CONTEXT HELPER (UPDATED FOR MULTI TERMS) ---
   const renderNotePreview = (content: string, query: string) => {
       const cleanContent = stripHtml(content).replace(/\s+/g, ' ').trim();
       
-      if (!query.trim()) {
+      const { terms } = parseSearchQuery(query);
+      
+      if (terms.length === 0) {
           return <span className="text-gray-400">{cleanContent.substring(0, 90)}{cleanContent.length > 90 ? '...' : ''}</span>;
       }
 
-      const idx = cleanContent.toLowerCase().indexOf(query.toLowerCase());
-      if (idx === -1) return <span className="text-gray-400">{cleanContent.substring(0, 90)}...</span>;
+      // Find the first occurrence of ANY term
+      let bestIdx = -1;
+      let firstTerm = terms[0];
+
+      for (const term of terms) {
+          const idx = cleanContent.toLowerCase().indexOf(term);
+          if (idx !== -1) {
+              if (bestIdx === -1 || idx < bestIdx) {
+                  bestIdx = idx;
+                  firstTerm = term;
+              }
+          }
+      }
+
+      if (bestIdx === -1) return <span className="text-gray-400">{cleanContent.substring(0, 90)}...</span>;
 
       const padding = 35; 
-      const start = Math.max(0, idx - padding);
-      const end = Math.min(cleanContent.length, idx + query.length + padding);
+      const start = Math.max(0, bestIdx - padding);
+      const end = Math.min(cleanContent.length, bestIdx + firstTerm.length + padding);
       
       const snippet = cleanContent.substring(start, end);
-      const parts = snippet.split(new RegExp(`(${query})`, 'gi'));
+      
+      // Regex for highlighting ALL terms
+      const regex = new RegExp(`(${terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+      
+      const parts = snippet.split(regex);
 
       return (
           <span className="text-gray-500">
               {start > 0 && "..."}
               {parts.map((part, i) => 
-                  part.toLowerCase() === query.toLowerCase() 
+                  terms.some(t => t === part.toLowerCase()) 
                   ? <span key={i} className="bg-yellow-200 text-gray-900 font-bold px-0.5 rounded box-decoration-clone">{part}</span>
                   : part
               )}
@@ -693,28 +799,29 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
   };
 
   // Actions
-  const handleScanInbox = async (isManual: boolean = true) => {
+  const handleScanInbox = async (useAI: boolean, isAuto: boolean = false) => {
     // Desktop Vault Check
     if (!VaultService.isConnected()) {
-        if (isManual) alert("Verwende den 'Import' Button auf mobilen Geräten.");
+        if (!isAuto) alert("Kein Vault verbunden. Nutze 'Dateien Importieren' für manuellen Upload oder verbinde einen Ordner im System-Tab.");
         return; 
     }
 
     // CHECK FOR API KEY (via LocalStorage now)
     const apiKey = localStorage.getItem('tatdma_api_key');
-    if (!apiKey) {
+    if (useAI && !apiKey) {
         alert("ACHTUNG: Kein API Key gefunden. Die AI-Funktion ist deaktiviert. Bitte in den Systemeinstellungen hinterlegen.");
     }
 
     const hasPermission = await VaultService.verifyPermission();
-    if (!hasPermission && isManual) await VaultService.requestPermission();
+    if (!hasPermission && !isAuto) await VaultService.requestPermission();
     
     setIsScanning(true);
-    if (!isManual) setScanMessage({ text: "Synchronisiere Inbox...", type: 'info' });
+    if (!isAuto) setScanMessage({ text: useAI ? "Smart AI Scan läuft..." : "Synchronisiere Inbox...", type: 'info' });
 
     setTimeout(async () => {
         try {
-            const result = await DocumentService.scanInbox(data.notes || {}, data.categoryRules || {});
+            // PASS THE useAI FLAG CORRECTLY TO THE SERVICE
+            const result = await DocumentService.scanInbox(data.notes || {}, data.categoryRules || {}, useAI);
             setLastScanTime(new Date().toLocaleTimeString());
 
             if (result.movedCount > 0) {
@@ -723,7 +830,17 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     newNotes[doc.id] = doc; 
                 });
                 
-                // Handle Tax Entries
+                // Handle Salary Updates
+                let salaryUpdateCount = 0;
+                const newSalary = JSON.parse(JSON.stringify(data.salary)); // Deep copy
+                
+                result.newSalaryData.forEach((s: any) => {
+                    if(!newSalary[s.year]) newSalary[s.year] = {};
+                    newSalary[s.year][s.month] = s.data; // Merge/Overwrite logic can be refined
+                    salaryUpdateCount++;
+                });
+
+                // Handle Tax Updates
                 let taxMsg = "";
                 let newExpenses = [...data.tax.expenses];
                 if (result.newTaxExpenses.length > 0) {
@@ -735,15 +852,21 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                     taxMsg = `, ${result.newTaxExpenses.length} Steuerbelege erfasst!`;
                 }
 
-                onUpdate({ ...data, notes: newNotes, tax: { ...data.tax, expenses: newExpenses } });
+                // Update ALL Data
+                onUpdate({ 
+                    ...data, 
+                    notes: newNotes, 
+                    tax: { ...data.tax, expenses: newExpenses },
+                    salary: newSalary
+                });
                 
-                const msg = `${result.movedCount} Dateien importiert${taxMsg}`;
+                const msg = `${result.movedCount} Dateien importiert${taxMsg} ${salaryUpdateCount > 0 ? `, ${salaryUpdateCount} Lohnabrechnungen` : ''}`;
                 setScanMessage({ text: msg, type: 'success' });
-                if (isManual) alert(msg);
+                if (!isAuto) alert(msg);
                 setSelectedCat('Inbox'); 
                 setTimeout(() => setScanMessage(null), 5000);
             } else {
-                if (isManual) {
+                if (!isAuto) {
                     alert("Keine neuen Dateien im _INBOX Ordner gefunden.");
                     setScanMessage(null);
                 } else {
@@ -752,7 +875,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 }
             }
         } catch (e: any) {
-            if (isManual) alert("Fehler beim Scannen: " + e.message);
+            if (!isAuto) alert("Fehler beim Scannen: " + e.message);
         } finally {
             setIsScanning(false);
         }
@@ -788,7 +911,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
               setTimeout(() => setScanMessage(null), 3000);
           }
       }, 50);
-      e.target.value = '';
+      e.target.value = ''; // Reset input immediately
   };
 
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1080,42 +1203,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
-  // --- ROBUST FILE HANDLING (FIXED: Force correct MIME Types) ---
-  const ensureFileBlob = async (): Promise<Blob | null> => {
-      if (!selectedNote) return null;
-      if (activeFileBlob) return activeFileBlob; 
-
-      let blob: Blob | null = null;
-      try {
-          blob = await DBService.getFile(selectedNote.id);
-      } catch (e) { /* ignore */ }
-
-      if (!blob && selectedNote.filePath && VaultService.isConnected()) {
-          blob = await DocumentService.getFileFromVault(selectedNote.filePath);
-      }
-      
-      // CRITICAL FIX: FORCE CORRECT MIME TYPE
-      if (blob) {
-          let type = blob.type;
-          
-          if (selectedNote.type === 'pdf') type = 'application/pdf';
-          else if (selectedNote.type === 'image') type = 'image/jpeg';
-          
-          // If type is missing or generic, enforce it based on metadata
-          if (!type || type === 'application/octet-stream') {
-             if (selectedNote.fileName?.toLowerCase().endsWith('.pdf')) type = 'application/pdf';
-             else if (selectedNote.fileName?.toLowerCase().match(/\.(jpg|jpeg|png)$/)) type = 'image/jpeg';
-          }
-
-          if (blob.type !== type) {
-              console.log(`Fixing Blob Type: ${blob.type} -> ${type}`);
-              blob = new Blob([blob], { type });
-          }
-          setActiveFileBlob(blob);
-      }
-      return blob;
-  };
-
   const openFile = async () => {
       const blob = await ensureFileBlob();
       if (blob) {
@@ -1126,7 +1213,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
-  // --- SHARE FUNCTIONALITY (ROBUST FALLBACK) ---
   const handleShare = async () => {
       if (!selectedNote) return;
       const blob = await ensureFileBlob();
@@ -1138,8 +1224,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       
       const file = new File([blob], fileName, { type: blob.type });
       
-      // 1. Try Native Share (Mobile & Supported Desktop)
-      // We rely on feature detection instead of user agent to be robust
       if (navigator.share) {
           try {
               await navigator.share({
@@ -1147,33 +1231,22 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                   title: selectedNote.title,
                   text: 'Dokument aus TaTDMA'
               });
-              return; // Success, stop here.
+              return; 
           } catch (shareError: any) {
-              // Ignore abort errors (user cancelled share sheet)
               if (shareError.name !== 'AbortError') {
                   console.warn("Share failed, falling back to open", shareError);
               } else {
-                  return; // User cancelled, do nothing
+                  return; 
               }
           }
       } 
       
-      // 2. Desktop / Fallback Behavior: Open in New Tab
-      // User explicitly requested to STOP automatic downloading.
-      // Opening in a new tab allows printing, saving, and copying URL.
       const url = URL.createObjectURL(blob);
       const newWindow = window.open(url, '_blank');
-      
-      // If popup blocker blocked it
-      if (!newWindow) {
-          alert("Bitte Popups erlauben, um das Dokument zu öffnen.");
-      }
-      
-      // Clean up URL after a delay
+      if (!newWindow) alert("Bitte Popups erlauben.");
       setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
-  // --- DOWNLOAD FUNCTIONALITY (Corrected) ---
   const handleDownload = async () => {
       const blob = await ensureFileBlob();
       if (!blob) return alert("Datei nicht verfügbar.");
@@ -1188,13 +1261,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       URL.revokeObjectURL(url);
   };
 
-  // --- PRINT FUNCTIONALITY (Corrected) ---
   const handlePrint = async () => {
       const blob = await ensureFileBlob();
       if (!blob) return alert("Datei nicht verfügbar.");
       const url = URL.createObjectURL(blob);
-      
-      // Open in new tab - browser handles PDF printing best
       const a = document.createElement('a');
       a.href = url;
       a.target = '_blank';
@@ -1220,7 +1290,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       onUpdate({ ...data, categoryRules: updatedRules });
   };
 
-  const getIconForType = (type: NoteDocument['type']) => {
+  const getIconForType = (type: NoteDocument['type'], filename?: string) => {
+      if (filename && filename.toLowerCase().endsWith('.pdf')) return <FileText size={16} className="text-red-500" />;
       switch(type) {
           case 'pdf': return <FileText size={16} className="text-red-500" />;
           case 'image': return <ImageIcon size={16} className="text-purple-500" />;
@@ -1287,6 +1358,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
       alert("Zu Ausgaben hinzugefügt. Bitte im 'Ausgaben'-Tab vervollständigen.");
   };
 
+  const isPdf = selectedNote?.type === 'pdf' || selectedNote?.fileName?.toLowerCase().endsWith('.pdf');
+  const isImage = selectedNote?.type === 'image' || selectedNote?.fileName?.toLowerCase().match(/\.(jpg|jpeg|png|heic|webp)$/);
+
   return (
     <div 
         className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-hidden relative min-h-[calc(100dvh-150px)] w-full"
@@ -1298,7 +1372,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
         className={`bg-gray-50 border-r border-gray-100 flex flex-col shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`}
         style={{ width: window.innerWidth >= 768 ? layout.sidebarW : '100%' }}
       >
-         
+         {/* ... (Sidebar code unchanged) ... */}
          {/* Mobile Toolbar Header */}
          <div className="md:hidden p-3 border-b border-gray-100 flex gap-2 items-center w-full overflow-x-hidden">
             {isScanning ? (
@@ -1393,22 +1467,47 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
          </div>
          {/* Footer */}
          <div className="hidden md:block p-4 border-t border-gray-100 bg-gray-50 space-y-2 relative">
+            {scanMessage && (
+                <div className={`absolute bottom-full left-4 right-4 mb-2 p-3 text-xs font-bold rounded-xl shadow-lg flex items-center gap-2 z-20 ${scanMessage.type === 'warning' ? 'bg-orange-100 text-orange-700' : scanMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-600 text-white'}`}>
+                    {scanMessage.text}
+                </div>
+            )}
+            
             <button onClick={() => zipImportInputRef.current?.click()} disabled={isScanning} className="w-full py-2.5 border border-purple-200 bg-purple-50 text-purple-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-purple-100 transition-all"><FileArchive size={14} /> ZIP Archiv Import</button>
             <input type="file" ref={zipImportInputRef} accept=".zip" className="hidden" onChange={handleZipImport} />
-            <button onClick={() => handleScanInbox(true)} disabled={isScanning} className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}>{isScanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />} Inbox Scannen</button>
+            
+            {/* SPLIT SCAN BUTTONS */}
+            <div className="grid grid-cols-2 gap-2">
+                <button 
+                    onClick={() => handleScanInbox(false)} 
+                    disabled={isScanning} 
+                    className={`w-full py-2.5 border border-gray-200 bg-white text-gray-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}
+                    title="Verschiebt Dateien basierend auf Regeln (Keine AI)"
+                >
+                    <FolderOpen size={14} /> Standard Scan
+                </button>
+                <button 
+                    onClick={() => handleScanInbox(true)} 
+                    disabled={isScanning} 
+                    className={`w-full py-2.5 border border-indigo-200 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:shadow-lg transition-all ${isScanning ? 'opacity-50 cursor-wait' : ''}`}
+                    title="Analysiert Inhalt, extrahiert Daten & Kosten (AI)"
+                >
+                    {isScanning ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} AI Smart Scan
+                </button>
+            </div>
+
             <button onClick={handleReindex} disabled={isReindexing} className={`w-full py-2.5 border border-blue-200 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-100 transition-all ${isReindexing ? 'opacity-50 cursor-wait' : ''}`} title="Liest bestehende Ordnerstruktur neu ein (kein AI-Scan)">{isReindexing ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Archive Sync</button>
          </div>
       </div>
 
-      {/* Resizer */}
+      {/* Rest of the file unchanged... */}
       <div className="hidden md:flex w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize items-center justify-center transition-all z-10" onMouseDown={startResizing('sidebar')}/>
 
-      {/* 2. NOTE LIST */}
       <div className={`border-r border-gray-100 flex flex-col min-h-0 bg-white shrink-0 ${selectedNoteId ? 'hidden md:flex' : 'flex'}`} style={{ width: window.innerWidth >= 768 ? layout.listW : '100%' }}>
          <div className="p-4 border-b border-gray-50 shrink-0 space-y-2">
             <div className="relative">
                 <Search size={16} className="absolute left-3 top-3 text-gray-400" />
-                <input type="text" placeholder="Suchen..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-50 transition-all"/>
+                <input type="text" placeholder="Suchen... ( 'Begriff1 ; Begriff2' für UND )" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-50 transition-all"/>
             </div>
             {(selectedCat !== 'All' || selectedSubCat) && (
                 <div className="flex gap-2 flex-wrap">
@@ -1422,7 +1521,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 <div key={note.id} onClick={() => setSelectedNoteId(note.id)} className={`p-4 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors ${selectedNoteId === note.id ? 'bg-blue-50/50 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}>
                     <div className="flex items-start justify-between mb-1">
                         <h4 className={`font-bold text-sm truncate flex-1 ${selectedNoteId === note.id ? 'text-blue-700' : 'text-gray-800'}`}>{note.title}</h4>
-                        <div className="flex items-center gap-1">{note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}{getIconForType(note.type)}</div>
+                        <div className="flex items-center gap-1">{note.taxRelevant && <span title="In Steuer importiert"><Receipt size={14} className="text-blue-500" /></span>}{getIconForType(note.type, note.fileName)}</div>
                     </div>
                     <div className="text-xs mb-2 h-10 leading-relaxed line-clamp-2">{renderNotePreview(note.content, searchQuery)}</div>
                     <div className="flex items-center justify-between mt-2">
@@ -1491,10 +1590,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                 </div>
                 
                 <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
+                    {/* RICH TEXT EDITOR */}
                     {selectedNote.type === 'note' ? (
                         <div key={selectedNote.id} className="flex flex-col h-full bg-white">
-                            {/* Toolbar */}
+                            {/* Toolbar ... */}
                             <div className="flex flex-col bg-gray-50 border-b border-gray-100 shrink-0">
+                                {/* ... Buttons ... */}
                                 <div className="flex items-center gap-1 p-2 overflow-x-auto flex-nowrap no-scrollbar">
                                     <button onClick={() => execCmd('undo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Rückgängig"><Undo size={14}/></button>
                                     <button onClick={() => execCmd('redo')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Wiederholen"><Redo size={14}/></button>
@@ -1507,7 +1608,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     <button onClick={insertTable} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Tabelle einfügen"><TableIcon size={14}/></button>
                                     <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer" title="Textfarbe">
                                         <Palette size={14} />
-                                        <input ref={colorInputRef} type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => execCmd('foreColor', e.target.value)} title="Textfarbe wählen" />
+                                        <input ref={colorInputRef} type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => execCmd('foreColor', e.target.value)} title="Textfarbe wählen"/>
                                     </div>
                                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
                                     <label className="p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer flex items-center gap-1" title="Bild einfügen">
@@ -1517,6 +1618,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                 </div>
                                 {activeTableCtx && (
                                     <div className="flex items-center gap-1 p-1 bg-blue-50 border-t border-blue-100 overflow-x-auto flex-nowrap animate-in slide-in-from-top-1">
+                                        {/* Table Context Menu */}
                                         <div className="px-2 text-[9px] font-black text-blue-400 uppercase tracking-wider flex items-center gap-1"><Layout size={10}/> Tabelle</div>
                                         <button onClick={() => manipulateTable('addRowAbove')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile oben"><ArrowUp size={12}/> Zeile</button>
                                         <button onClick={() => manipulateTable('addRowBelow')} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1" title="Zeile unten"><ArrowDown size={12}/> Zeile</button>
@@ -1531,16 +1633,38 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                     </div>
                                 )}
                             </div>
-                            <div ref={editorRef} contentEditable onInput={handleEditorInput} onPaste={handlePaste} onSelect={checkTableContext} onClick={checkTableContext} onKeyUp={checkTableContext} className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_td]:align-top [&_td]:break-words [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50 [&_th]:text-left pb-24" style={{ minHeight: '100px', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }} />
-                            <div className="p-2 border-t border-gray-100 bg-gray-50 text-[10px] text-gray-400 flex justify-between safe-area-bottom"><span>{stripHtml(selectedNote.content).length} Zeichen</span></div>
+
+                            <div 
+                                ref={editorRef}
+                                contentEditable
+                                onInput={handleEditorInput}
+                                onPaste={handlePaste}
+                                onSelect={checkTableContext} 
+                                onClick={checkTableContext} 
+                                onKeyUp={checkTableContext} 
+                                className="flex-1 p-4 md:p-8 outline-none overflow-y-auto text-gray-800 leading-relaxed text-sm prose max-w-none [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_td]:align-top [&_td]:break-words [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50 [&_th]:text-left pb-24"
+                                style={{ minHeight: '100px', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}
+                            />
+                            <div className="p-2 border-t border-gray-100 bg-gray-50 text-[10px] text-gray-400 flex justify-between safe-area-bottom">
+                                <span>{stripHtml(selectedNote.content).length} Zeichen</span>
+                            </div>
                         </div>
                     ) : (
+                        // PREVIEW FOR FILES
                         <div className="flex-1 p-4 overflow-y-auto pb-24" style={{ WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
+                           {/* NEW USER NOTE SECTION */}
                            <div className="mb-4">
-                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1"><StickyNote size={12} /> Eigene Notizen</label>
-                               <textarea value={selectedNote.userNote || ''} onChange={(e) => updateSelectedNote({ userNote: e.target.value })} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..." />
+                               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                                   <StickyNote size={12} /> Eigene Notizen
+                               </label>
+                               <textarea
+                                   value={selectedNote.userNote || ''}
+                                   onChange={(e) => updateSelectedNote({ userNote: e.target.value })}
+                                   className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all"
+                                   placeholder="Notizen zum Dokument..."
+                               />
                            </div>
-                           
+
                            {/* ROBUST WRAPPER FOR PDF/IMAGE PREVIEW WITH OVERLAY */}
                            <div className={isMaximized ? "fixed inset-0 z-[5000] bg-white p-2 md:p-4 flex flex-col overflow-auto" : "space-y-2"}>
                                <div className={`relative ${isMaximized ? 'w-full h-full min-h-screen bg-white' : ''}`}>
@@ -1553,27 +1677,53 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                        </div>
                                    )}
 
-                                   {selectedNote.type === 'pdf' && activeFileBlob ? (
+                                   {/* FORCE PDF VIEWER IF TYPE IS PDF OR FILENAME ENDS WITH .PDF */}
+                                   {isPdf ? (
                                         <div className={isMaximized ? "w-full h-full overflow-auto" : "space-y-2"}>
                                             {!isMaximized && (
                                                 <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1"><FileText size={14} className="text-gray-400" /><span className="font-mono truncate">{selectedNote.fileName}</span></div>
                                             )}
-                                            <div className={`${isMaximized ? 'min-h-screen' : 'overflow-x-auto border border-gray-200 rounded-lg'}`}>
-                                                <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
-                                            </div>
+                                            {activeFileBlob ? (
+                                                <div className={`${isMaximized ? 'min-h-screen' : 'overflow-x-auto border border-gray-200 rounded-lg'}`}>
+                                                    <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
+                                                </div>
+                                            ) : fileLoadError ? (
+                                                // ERROR STATE FOR MISSING FILE
+                                                <div className="flex flex-col items-center justify-center py-20 bg-red-50 rounded-lg border border-red-100 text-center px-4">
+                                                    <AlertTriangle size={32} className="text-red-400 mb-2" />
+                                                    <span className="text-xs font-bold text-red-500">{fileLoadError}</span>
+                                                    <p className="text-[10px] text-gray-400 mt-2">Versuche es erneut oder prüfe den Dateinamen im Archiv.</p>
+                                                    <button onClick={() => { setFileLoadError(null); setActiveFileBlob(null); }} className="mt-4 px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg text-xs font-bold shadow-sm hover:bg-red-50">Erneut laden</button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center py-20 bg-gray-50 rounded-lg border border-gray-100">
+                                                    <Loader2 size={32} className="animate-spin text-blue-400 mb-2" />
+                                                    <span className="text-xs font-bold text-gray-400">Lade PDF...</span>
+                                                </div>
+                                            )}
                                         </div>
-                                   ) : selectedNote.type === 'image' ? (
+                                   ) : isImage ? (
                                         <div className={isMaximized ? "w-full h-full overflow-auto flex items-center justify-center bg-gray-50" : "space-y-2"}>
                                             {!isMaximized && (
                                                 <div className="flex items-center gap-2 text-xs text-gray-500 font-medium px-1"><ImageIcon size={14} className="text-gray-400" /><span className="font-mono truncate">{selectedNote.fileName}</span></div>
                                             )}
-                                            {activeFileBlob && (
+                                            {activeFileBlob ? (
                                                 <div className={`${isMaximized ? 'w-full h-auto' : 'rounded-lg border border-gray-200 overflow-hidden shadow-sm'}`}>
                                                     <img 
                                                         src={URL.createObjectURL(activeFileBlob)} 
                                                         alt="Preview" 
                                                         className={isMaximized ? "w-full h-auto object-contain" : "w-full h-auto"} 
                                                     />
+                                                </div>
+                                            ) : fileLoadError ? (
+                                                <div className="flex flex-col items-center justify-center py-20 bg-red-50 rounded-lg border border-red-100 text-center px-4">
+                                                    <AlertTriangle size={32} className="text-red-400 mb-2" />
+                                                    <span className="text-xs font-bold text-red-500">{fileLoadError}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center py-20 bg-gray-50 rounded-lg border border-gray-100">
+                                                    <Loader2 size={32} className="animate-spin text-purple-400 mb-2" />
+                                                    <span className="text-xs font-bold text-gray-400">Lade Bild...</span>
                                                 </div>
                                             )}
                                             {!isMaximized && (
@@ -1584,15 +1734,23 @@ const NotesView: React.FC<Props> = ({ data, onUpdate }) => {
                                             )}
                                         </div>
                                     ) : (
-                                        <div className="flex flex-col items-center justify-center h-full text-center space-y-6">
-                                            <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                                                {selectedNote.type === 'word' ? <FileType size={48} /> : <FileSpreadsheet size={48} />}
+                                        <div className="flex flex-col items-center justify-center h-full text-center space-y-6 py-20">
+                                            <div className={`w-24 h-24 rounded-3xl flex items-center justify-center ${selectedNote.type === 'word' ? 'bg-blue-50 text-blue-600' : selectedNote.type === 'excel' ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                                                {selectedNote.type === 'word' ? <FileType size={48} /> : selectedNote.type === 'excel' ? <FileSpreadsheet size={48} /> : <FileIcon size={48} />}
                                             </div>
                                             <div className="space-y-2">
-                                                <h3 className="text-xl font-black text-gray-800">{selectedNote.type === 'word' ? 'Word Dokument' : 'Excel Tabelle'}</h3>
-                                                <p className="text-sm text-gray-400 max-w-md mx-auto">Inhalt extrahiert:<br/><span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span></p>
+                                                <h3 className="text-xl font-black text-gray-800">
+                                                    {selectedNote.type === 'word' ? 'Word Dokument' : selectedNote.type === 'excel' ? 'Excel Tabelle' : 'Unbekanntes Format'}
+                                                </h3>
+                                                <p className="text-sm text-gray-400 max-w-md mx-auto">
+                                                    {selectedNote.type === 'other' ? 'Vorschau nicht verfügbar.' : 'Inhalt extrahiert:'}
+                                                    <br/>
+                                                    <span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded mt-2 inline-block max-w-xs truncate">{selectedNote.content.substring(0,50)}...</span>
+                                                </p>
                                             </div>
-                                            {selectedNote.filePath && (<button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>)}
+                                            {selectedNote.filePath && (
+                                                <button onClick={openFile} className="px-8 py-3 bg-[#16325c] text-white rounded-xl font-bold shadow-xl flex items-center gap-2"><Download size={18} /> Datei Öffnen</button>
+                                            )}
                                         </div>
                                     )}
                                </div>

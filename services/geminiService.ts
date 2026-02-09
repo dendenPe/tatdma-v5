@@ -42,6 +42,18 @@ export interface AnalyzedDocument {
       // Updated items to support objects
       items?: Array<{ name: string, price: number }>; 
   };
+  salaryData?: {
+      isSalary: boolean;
+      month: string; // "01", "02", etc.
+      year: string;
+      netIncome: number;
+      grossIncome: number;
+      payout: number;
+      ahv: number;
+      alv: number;
+      bvg: number;
+      tax: number;
+  };
   paymentDetails?: {
     recipientName?: string;
     payerName?: string;
@@ -64,9 +76,6 @@ export class GeminiService {
       reader.readAsDataURL(file);
       reader.onload = () => {
         const result = reader.result as string;
-        // The result usually looks like "data:image/jpeg;base64,..."
-        // If file.type was empty, it might be "data:base64,..." or similar depending on browser.
-        // We always want the part AFTER the comma.
         const base64 = result.split(',')[1];
         resolve(base64);
       };
@@ -100,8 +109,6 @@ export class GeminiService {
       }
   }
 
-  // NEW: Convert first page of PDF to High-Res Image Base64
-  // This forces Gemini to use Vision capabilities instead of relying on broken PDF text layers.
   private static async pdfToImageBase64(file: File): Promise<string> {
       try {
           const arrayBuffer = await file.arrayBuffer();
@@ -127,6 +134,25 @@ export class GeminiService {
       } catch (e) {
           console.error("PDF-to-Image conversion failed", e);
           throw e;
+      }
+  }
+
+  // --- RETRY HELPER ---
+  private static async generateWithRetry(aiModel: any, params: any, retries = 3): Promise<any> {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+          try {
+              return await aiModel.generateContent(params);
+          } catch (error: any) {
+              const msg = error.message || '';
+              // 503 = Service Unavailable, 429 = Too Many Requests
+              if ((msg.includes('503') || msg.includes('429') || msg.includes('overloaded')) && attempt < retries) {
+                  const delay = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
+                  console.warn(`Gemini API Busy (503/429). Retrying in ${delay}ms... (Attempt ${attempt + 1}/${retries})`);
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                  continue;
+              }
+              throw error;
+          }
       }
   }
 
@@ -170,7 +196,7 @@ export class GeminiService {
         required: ["amount", "currency", "category", "description"],
       };
 
-      const response = await ai.models.generateContent({
+      const response = await this.generateWithRetry(ai.models, {
         model: 'gemini-3-flash-preview', 
         contents: {
           parts: [
@@ -272,6 +298,23 @@ export class GeminiService {
               nullable: true
           },
 
+          salaryData: {
+              type: Type.OBJECT,
+              properties: {
+                  isSalary: { type: Type.BOOLEAN, description: "TRUE if this is a Salary Slip (Lohnabrechnung) or Insurance Payout (Taggeld/Lohnausfall)." },
+                  month: { type: Type.STRING, description: "Two digit month string e.g. '01', '02', '12'." },
+                  year: { type: Type.STRING, description: "YYYY" },
+                  netIncome: { type: Type.NUMBER, description: "Nettolohn or Net Payout" },
+                  grossIncome: { type: Type.NUMBER, description: "Bruttolohn" },
+                  payout: { type: Type.NUMBER, description: "Auszahlungsbetrag" },
+                  ahv: { type: Type.NUMBER, description: "AHV/IV deduction (positive number)" },
+                  alv: { type: Type.NUMBER, description: "ALV deduction (positive number)" },
+                  bvg: { type: Type.NUMBER, description: "PK/BVG deduction (positive number)" },
+                  tax: { type: Type.NUMBER, description: "Quellensteuer deduction (positive number)" }
+              },
+              nullable: true
+          },
+
           paymentDetails: {
             type: Type.OBJECT,
             properties: {
@@ -290,27 +333,35 @@ export class GeminiService {
       const prompt = `
       Perform a VISUAL ANALYSIS of this document. It might be an image or a scanned PDF.
       
-      TASK: IDENTIFY EXPENSES
-      Look for ANY prices, totals, receipts, invoices, or payment confirmations.
-      If you see a price and a merchant/vendor:
-      1. Set 'dailyExpenseData.isExpense' to TRUE.
-      2. Extract the 'merchant' (e.g. Coop, SBB, Apple, Restaurant XYZ).
-      3. Extract the 'amount' (Endbetrag / Total).
-      4. Categorize into: Verpflegung, Mobilität, Haushalt, Freizeit, Shopping, Gesundheit, Wohnen, Reisen, Sonstiges.
-      5. IF IT IS A SHOPPING RECEIPT: Extract the specific items purchased into 'dailyExpenseData.items' with their prices.
+      STEP 1: IDENTIFY DOCUMENT TYPE (INCOME vs EXPENSE)
       
-      TASK: CLASSIFY
+      A) INCOME: Is this a Salary Slip (Lohnabrechnung), Bonus statement, or Loss of Earnings Insurance (Taggeldabrechnung / Lohnausfallversicherung / Versicherungsleistung)?
+         -> If YES:
+            - Set 'salaryData.isSalary' to TRUE.
+            - Extract Month (format "01" to "12") and Year.
+            - Extract Gross (Brutto) and Net (Netto/Auszahlung). 
+            - If it's Insurance/Taggeld, usually there is only a Net Payout (Auszahlung) or a Daily Allowance amount. Treat this as Net/Payout.
+            - Extract Deductions (AHV, ALV, BVG/PK, Quellensteuer) if present. If columns are missing, leave them as 0.
+            - IMPORTANT: Do NOT categorize as 'Steuern & Abgaben' or 'Expenses'. Categorize as 'Beruf & Beschäftigung' or 'Versicherungen' (if Taggeld).
+            - Set 'isTaxRelevant' to FALSE (It's income, not a tax deduction).
+      
+      B) EXPENSE: Is this a Bill, Receipt, Ticket, Invoice, or Purchase?
+         -> If YES:
+            - Set 'dailyExpenseData.isExpense' to TRUE.
+            - Extract Merchant, Amount, Items.
+            - If it's tax deductible (e.g. Weiterbildung, Krankenkasse, Berufsauslagen), set 'isTaxRelevant' to TRUE and fill 'taxData'.
+      
+      STEP 2: CLASSIFY
       Assign a main category from the provided list.
       Structure:
       ${structureContext}
       
       Important: 
-      - If it is a receipt (Quittung), extracting the expense data AND INDIVIDUAL ITEM PRICES is the HIGHEST priority.
-      - Ignore bad OCR text layers; trust your vision model (pixels) for numbers and names.
       - Date format: YYYY-MM-DD.
+      - Ignore bad OCR text layers; trust your vision model (pixels) for numbers and names.
       `;
 
-      const response = await ai.models.generateContent({
+      const response = await this.generateWithRetry(ai.models, {
         model: 'gemini-3-flash-preview',
         contents: {
           parts: [
@@ -339,13 +390,8 @@ export class GeminiService {
           if (!apiKey) throw new Error("API Key fehlt!");
 
           const ai = new GoogleGenAI({ apiKey });
-          
-          // Read CSV as Text (Model works better with raw CSV text than image)
           const csvText = await this.fileToText(file);
           
-          // If CSV is enormous, we might need to truncate, but usually Activity Reports are fine for 2M token window.
-          // Let's pass it as text.
-
           const schema = {
               type: Type.OBJECT,
               properties: {
@@ -426,9 +472,9 @@ export class GeminiService {
           
           CSV CONTENT:
           ${csvText.substring(0, 100000)} 
-          `; // Limit context if needed, but 100k chars is usually fine for Flash model
+          `;
 
-          const response = await ai.models.generateContent({
+          const response = await this.generateWithRetry(ai.models, {
               model: 'gemini-3-flash-preview',
               contents: { parts: [{ text: prompt }] },
               config: { responseMimeType: "application/json", responseSchema: schema }
@@ -437,7 +483,6 @@ export class GeminiService {
           if (!response.text) return null;
           const aiJson = JSON.parse(response.text);
 
-          // Convert AI JSON to App Model (Record based)
           const result: PortfolioYear = {
               positions: {},
               cash: {},
@@ -452,7 +497,6 @@ export class GeminiService {
               exchangeRates: {}
           };
 
-          // Map Positions
           if (aiJson.positions) {
               aiJson.positions.forEach((p: any) => {
                   if (p.symbol) {
@@ -470,14 +514,12 @@ export class GeminiService {
               });
           }
 
-          // Map Cash
           if (aiJson.cash) {
               aiJson.cash.forEach((c: any) => {
                   if (c.currency) result.cash[c.currency] = c.amount || 0;
               });
           }
 
-          // Map Rates
           if (aiJson.exchangeRates) {
               aiJson.exchangeRates.forEach((r: any) => {
                   if (r.pair && r.rate) result.exchangeRates[r.pair] = r.rate;
