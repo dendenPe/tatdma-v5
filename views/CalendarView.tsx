@@ -14,7 +14,8 @@ import {
   Trash2,
   Timer,
   Paperclip,
-  Image as ImageIconAlt
+  Image as ImageIconAlt,
+  Wallet
 } from 'lucide-react';
 import { AppData, DayEntry, Trade } from '../types';
 import { DBService } from '../services/dbService';
@@ -95,17 +96,26 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
 
   const monthStats = () => {
     let total = 0;
+    let fees = 0;
     let wins = 0;
     let count = 0;
+    
     for (let i = 1; i <= daysInMonth; i++) {
-      const pnl = getDayPnL(i);
-      if (pnl !== 0) {
-        total += pnl;
-        if (pnl > 0) wins++;
-        count++;
+      const key = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      const entry = data.trades[key];
+      
+      if (entry) {
+          if (entry.total !== 0) {
+              total += entry.total;
+              if (entry.total > 0) wins++;
+              count++;
+          }
+          if (entry.fees) {
+              fees += entry.fees;
+          }
       }
     }
-    return { total, wr: count > 0 ? (wins / count * 100).toFixed(0) : '0', count };
+    return { total, fees, wr: count > 0 ? (wins / count * 100).toFixed(0) : '0', count };
   };
 
   const stats = monthStats();
@@ -242,13 +252,22 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
               <ChevronRight size={20} />
             </button>
           </div>
-          <div className="flex gap-2 w-full sm:w-auto justify-center">
+          <div className="flex gap-2 w-full sm:w-auto justify-center flex-wrap">
             <div className="flex-1 sm:flex-none px-4 py-2 bg-green-50 rounded-xl border border-green-100 flex items-center justify-center gap-2">
               <TrendingUp size={16} className="text-green-500" />
               <span className={`text-sm font-black ${stats.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {stats.total >= 0 ? '+' : ''}{stats.total.toLocaleString('en-US', { minimumFractionDigits: 2 })} $
               </span>
             </div>
+            
+            {/* Monthly Fees Badge */}
+            <div className="flex-1 sm:flex-none px-4 py-2 bg-red-50 rounded-xl border border-red-100 flex items-center justify-center gap-2" title="Monatliche Kommissionen">
+              <Wallet size={16} className="text-red-500" />
+              <span className="text-sm font-black text-red-600">
+                -{stats.fees.toLocaleString('en-US', { minimumFractionDigits: 2 })} $
+              </span>
+            </div>
+
             <div className="flex-1 sm:flex-none px-4 py-2 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-center gap-2">
               <Clock size={16} className="text-blue-500" />
               <span className="text-sm font-black text-blue-700">{stats.wr}% Win</span>

@@ -47,7 +47,6 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
   });
 
   // 2. CHART DATA PREPARATION (DAILY)
-  // IMPORTANT: entry.total is already NET (Gross - Fees) as calculated in TradingView
   const tradeData = validTradeEntries.map(([date, entry]) => {
     const dObj = new Date(date);
     const displayDate = !isNaN(dObj.getTime()) 
@@ -57,16 +56,24 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
     return {
       fullDate: date,
       displayDate: displayDate,
-      pnl: Number(entry.total) || 0, 
+      pnl: Number(entry.total) || 0, // Net PnL
       count: entry.trades ? entry.trades.length : 0
     };
   });
 
-  // 3. MONTHLY AGGREGATION
-  const monthlyAgg: Record<string, number> = {};
+  // 3. MONTHLY AGGREGATION (With Fees Breakdown)
+  const monthlyAgg: Record<string, { net: number, fees: number, gross: number }> = {};
+  
   validTradeEntries.forEach(([date, entry]) => {
       const monthKey = date.substring(0, 7); 
-      monthlyAgg[monthKey] = (monthlyAgg[monthKey] || 0) + (Number(entry.total) || 0);
+      if (!monthlyAgg[monthKey]) monthlyAgg[monthKey] = { net: 0, fees: 0, gross: 0 };
+      
+      const dayNet = Number(entry.total) || 0;
+      const dayFees = Number(entry.fees) || 0;
+      
+      monthlyAgg[monthKey].net += dayNet;
+      monthlyAgg[monthKey].fees += dayFees;
+      monthlyAgg[monthKey].gross += (dayNet + dayFees);
   });
 
   const monthlyData = Object.entries(monthlyAgg).map(([key, val]) => {
@@ -76,7 +83,9 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
           monthKey: key, 
           display: d.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' }), 
           fullDate: `${key}-01`, 
-          pnl: val
+          pnl: val.net,
+          fees: val.fees,
+          gross: val.gross
       };
   }).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 
@@ -87,12 +96,11 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
       return { ...day, cum: runningTotal };
   });
 
-  // 5. METRICS & STRATEGY (FIXED: NET PNL CALCULATION)
+  // 5. METRICS & STRATEGY
   const strategyStats = allTrades.reduce((acc: any, t) => {
     const strat = t.strategy || 'Unbekannt';
     if (!acc[strat]) acc[strat] = { name: strat, count: 0, pnl: 0 };
     
-    // NET PNL CALCULATION: Gross PnL - Commission
     const gross = Number(t.pnl) || 0;
     const fee = Number(t.fee) || 0;
     const net = gross - fee;
@@ -118,17 +126,15 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
     ? allTrades.reduce((sum, t) => sum + calculateDuration(t.start, t.end), 0) / allTrades.length 
     : 0;
 
-  // GLOBAL TOTALS (Calculated from single trades to ensure consistency with Strategy breakdown)
+  // GLOBAL TOTALS
   const totalGrossPnL = allTrades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
   const totalFees = allTrades.reduce((s, t) => s + (Number(t.fee) || 0), 0);
   const totalNetPnL = totalGrossPnL - totalFees;
   
-  // Win Rate based on Net PnL per trade
   const winRate = allTrades.length > 0 
     ? (allTrades.filter(t => ((Number(t.pnl)||0) - (Number(t.fee)||0)) > 0).length / allTrades.length * 100).toFixed(1) 
     : 0;
 
-  // Chart Interaction
   const handleMonthClick = (data: any) => {
       if (data && data.activePayload && data.activePayload.length > 0) {
           const payload = data.activePayload[0].payload;
@@ -156,7 +162,7 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
               <div className={`p-2 rounded-lg ${totalNetPnL >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                 <TrendingUp size={16} />
               </div>
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Netto PnL</span>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Netto PnL (Gesamt)</span>
             </div>
             <div className={`text-xl font-black ${totalNetPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {totalNetPnL.toLocaleString('de-CH', { minimumFractionDigits: 2 })} $
@@ -168,7 +174,7 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
               <div className="p-2 rounded-lg bg-red-50 text-red-500">
                 <Wallet size={16} />
               </div>
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kommissionen</span>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kommissionen (Gesamt)</span>
             </div>
             <div className="text-xl font-black text-red-500">
                 -{totalFees.toLocaleString('de-CH', { minimumFractionDigits: 2 })} $
@@ -200,32 +206,74 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
         </div>
       </div>
 
-      {/* Monthly Performance Chart */}
-      <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                  <CalendarDays size={14} className="text-blue-500" /> Monatsabschlüsse (Netto)
-              </h4>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Monthly Net PnL Chart */}
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <CalendarDays size={14} className="text-blue-500" /> Monatsabschlüsse (Netto)
+                  </h4>
+              </div>
+              <div className="h-[250px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyData} onClick={handleMonthClick} className="cursor-pointer">
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="display" fontSize={10} axisLine={false} tickLine={false} />
+                    <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                    <Tooltip 
+                        cursor={{fill: '#f3f4f6'}}
+                        content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                                const d = payload[0].payload;
+                                return (
+                                    <div className="bg-white p-3 rounded-xl shadow-xl border border-gray-100 text-xs">
+                                        <p className="font-bold text-gray-700 mb-2">{d.display}</p>
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                            <span className="text-gray-400">Brutto:</span>
+                                            <span className={`font-mono font-bold text-right ${d.gross >= 0 ? 'text-green-600' : 'text-red-600'}`}>{d.gross.toFixed(2)}</span>
+                                            <span className="text-gray-400">Gebühr:</span>
+                                            <span className="font-mono font-bold text-right text-red-500">-{d.fees.toFixed(2)}</span>
+                                            <div className="col-span-2 h-px bg-gray-100 my-1"></div>
+                                            <span className="font-black text-gray-800">Netto:</span>
+                                            <span className={`font-mono font-black text-right ${d.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{d.pnl.toFixed(2)} $</span>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            return null;
+                        }}
+                    />
+                    <ReferenceLine y={0} stroke="#e5e7eb" />
+                    <Bar dataKey="pnl" radius={[4, 4, 4, 4]} barSize={40}>
+                      {monthlyData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#f87171'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
           </div>
-          <div className="h-[250px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyData} onClick={handleMonthClick} className="cursor-pointer">
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="display" fontSize={10} axisLine={false} tickLine={false} />
-                <YAxis fontSize={10} axisLine={false} tickLine={false} />
-                <Tooltip 
-                    cursor={{fill: '#f3f4f6'}}
-                    formatter={(value: number) => [`${value.toFixed(2)} $`, 'Net PnL']}
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                />
-                <ReferenceLine y={0} stroke="#e5e7eb" />
-                <Bar dataKey="pnl" radius={[4, 4, 4, 4]} barSize={40}>
-                  {monthlyData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#f87171'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+
+          {/* NEW: Monthly Fees Chart */}
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <Wallet size={14} className="text-red-500" /> Monatliche Kommissionen
+              </h4>
+              <div className="h-[250px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="display" fontSize={10} axisLine={false} tickLine={false} />
+                    <YAxis fontSize={10} axisLine={false} tickLine={false} />
+                    <Tooltip 
+                        cursor={{fill: '#f3f4f6'}}
+                        formatter={(value: number) => [`${value.toFixed(2)} $`, 'Gebühren']}
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                    />
+                    <Bar dataKey="fees" radius={[4, 4, 0, 0]} barSize={40} fill="#f87171" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
           </div>
       </div>
 

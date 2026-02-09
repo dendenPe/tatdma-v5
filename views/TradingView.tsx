@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp, X } from 'lucide-react';
 import { AppData, Trade, DayEntry } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';
@@ -21,6 +21,9 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
     fees: 0
   });
   const [message, setMessage] = useState('');
+  const [screenshotPreviews, setScreenshotPreviews] = useState<Record<string, string>>({});
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load data whenever currentDate or data changes
   useEffect(() => {
@@ -37,6 +40,22 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
       });
     }
   }, [currentDate, data.trades]);
+
+  // Load Screenshot Previews
+  useEffect(() => {
+    // Cleanup old URLs
+    Object.values(screenshotPreviews).forEach(url => URL.revokeObjectURL(url));
+    setScreenshotPreviews({});
+
+    if (entry.screenshots && entry.screenshots.length > 0) {
+        entry.screenshots.forEach(async (id) => {
+            const blob = await DBService.getFile(id);
+            if (blob) {
+                setScreenshotPreviews(prev => ({ ...prev, [id]: URL.createObjectURL(blob) }));
+            }
+        });
+    }
+  }, [entry.screenshots]);
 
   const changeDate = (days: number) => {
     const date = new Date(currentDate);
@@ -74,10 +93,54 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
     }
   };
 
+  const handleFileUpload = async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      
+      const newIds: string[] = [];
+      const newPreviews: Record<string, string> = {};
+
+      for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (!file.type.startsWith('image/')) continue;
+
+          const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          await DBService.saveFile(id, file);
+          
+          newIds.push(id);
+          newPreviews[id] = URL.createObjectURL(file);
+      }
+
+      if (newIds.length > 0) {
+          setScreenshotPreviews(prev => ({ ...prev, ...newPreviews }));
+          setEntry(prev => ({ ...prev, screenshots: [...(prev.screenshots || []), ...newIds] }));
+          setMessage('Bild hinzugefügt (Speichern nicht vergessen!)');
+          setTimeout(() => setMessage(''), 2000);
+      }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+      if (e.clipboardData.files.length > 0) {
+          handleFileUpload(e.clipboardData.files);
+      }
+  };
+
+  const removeScreenshot = (id: string) => {
+      const newScreenshots = (entry.screenshots || []).filter(s => s !== id);
+      setEntry({ ...entry, screenshots: newScreenshots });
+      
+      // Cleanup preview URL
+      if (screenshotPreviews[id]) {
+          URL.revokeObjectURL(screenshotPreviews[id]);
+          const newPreviews = { ...screenshotPreviews };
+          delete newPreviews[id];
+          setScreenshotPreviews(newPreviews);
+      }
+  };
+
   const handleSave = () => {
     const newData = { ...data };
     // Only save if there is content to avoid empty entries in DB
-    if (entry.trades.length > 0 || entry.note.trim() || entry.total !== 0) {
+    if (entry.trades.length > 0 || entry.note.trim() || entry.total !== 0 || (entry.screenshots && entry.screenshots.length > 0)) {
         newData.trades[currentDate] = entry;
     } else {
         newData.trades[currentDate] = entry;
@@ -106,21 +169,13 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
               const existingDay = newData.trades[date];
               if (importedEntry.note) existingDay.note = importedEntry.note;
               
-              // MERGE TRADES INTELLIGENTLY
-              // 1. Check if the IMPORT contains aggregated trades
               const hasAggregatedImports = importedEntry.trades.some(t => t.strategy?.includes('Agg'));
               
               if (hasAggregatedImports) {
-                  // If we are importing aggregated data (Execution Report), we assume this replaces 
-                  // any previous aggregated data for this day to avoid duplication.
-                  // We KEEP manual trades (those without 'Agg' strategy).
                   const manualTrades = existingDay.trades.filter(t => !t.strategy?.includes('Agg'));
-                  
-                  // Now add the new imported trades
                   existingDay.trades = [...manualTrades, ...importedEntry.trades];
                   count += importedEntry.trades.length;
               } else {
-                  // Standard Merge for individual trades
                   const uniqueNewTrades: Trade[] = [];
                   importedEntry.trades.forEach(newTrade => {
                       const isDuplicate = existingDay.trades.some(existing => 
@@ -138,18 +193,15 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                   }
               }
 
-              // FORCE RECALCULATE TOTALS from the Trade List
-              // This fixes the "4x fees" bug where we kept adding to the daily total blindly.
               const recalcGross = existingDay.trades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
               const recalcFees = existingDay.trades.reduce((s, t) => s + (Number(t.fee) || 0), 0);
               
               existingDay.fees = recalcFees;
-              existingDay.total = recalcGross - recalcFees; // Net PnL
+              existingDay.total = recalcGross - recalcFees; 
           }
       });
 
       onUpdate(newData);
-      // Refresh view if current day was affected
       if (importedDays[currentDate] || newData.trades[currentDate]) {
           setEntry(newData.trades[currentDate]);
       }
@@ -168,7 +220,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   const grossTotal = (entry.total || 0) + (entry.fees || 0);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6" onPaste={handlePaste}>
       {/* HEADER WITH NAVIGATION */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
          <div className="flex items-center gap-4">
@@ -352,11 +404,41 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
               Screenshots
             </h4>
             <div className="space-y-3">
-              <div className="aspect-square border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-all cursor-pointer bg-gray-50">
+              {/* Clickable Upload Area */}
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="aspect-square border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-all cursor-pointer bg-gray-50 active:scale-95"
+              >
+                <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept="image/*" 
+                    multiple
+                    onChange={(e) => handleFileUpload(e.target.files)} 
+                />
                 <ImageIcon size={32} />
                 <span className="text-[10px] mt-2 font-bold uppercase tracking-tight">Klicken zum Upload</span>
+                <span className="text-[9px] font-medium opacity-50 mt-1">oder Paste (Ctrl+V)</span>
               </div>
               <p className="text-[10px] text-gray-400 text-center italic">Maximal 5 Bilder pro Tag</p>
+              
+              {/* Thumbnail Gallery */}
+              {entry.screenshots && entry.screenshots.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 mt-4">
+                      {entry.screenshots.map((id) => (
+                          <div key={id} className="relative group aspect-video rounded-lg overflow-hidden border border-gray-200 shadow-sm bg-gray-100">
+                              <img src={screenshotPreviews[id]} alt="Screenshot" className="w-full h-full object-cover" />
+                              <button 
+                                  onClick={(e) => { e.stopPropagation(); removeScreenshot(id); }}
+                                  className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                  <Trash2 size={12} />
+                              </button>
+                          </div>
+                      ))}
+                  </div>
+              )}
             </div>
           </div>
 
