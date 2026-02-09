@@ -8,34 +8,34 @@ import {
   MapPin, 
   DollarSign, 
   PieChart as PieIcon, 
-  ShoppingBag,
-  Coffee,
-  Car,
-  Home,
-  HeartPulse,
-  Globe,
-  FileText,
-  Eye,
-  Sparkles,
-  Loader2,
-  X,
-  ChevronDown,
-  ChevronRight,
-  ChevronLeft,
-  ShoppingBasket,
-  Pencil,
-  Save,
-  Filter,
-  Calendar,
-  Receipt,
-  Check,
-  ExternalLink,
-  Share2,
-  Maximize2,
-  RefreshCw,
-  Clock,
-  History,
-  ListFilter
+  ShoppingBag, 
+  Coffee, 
+  Car, 
+  Home, 
+  HeartPulse, 
+  Globe, 
+  FileText, 
+  Eye, 
+  Sparkles, 
+  Loader2, 
+  X, 
+  ChevronDown, 
+  ChevronRight, 
+  ChevronLeft, 
+  ShoppingBasket, 
+  Pencil, 
+  Save, 
+  Filter, 
+  Calendar, 
+  Receipt, 
+  Check, 
+  ExternalLink, 
+  Share2, 
+  Maximize2, 
+  RefreshCw, 
+  Clock, 
+  History, 
+  ListFilter 
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -455,7 +455,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
   const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden" style={{ touchAction: 'pan-y' }}>
+    <div className="max-w-7xl mx-auto space-y-6 pb-24 overflow-x-hidden" style={{ touchAction: 'manipulation' }}>
       
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 rounded-3xl border border-gray-100 shadow-sm">
@@ -551,7 +551,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       </h3>
                       <div className="relative w-48 hidden md:block">
                           <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
-                          <input type="text" placeholder="Suche..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-1 focus:ring-blue-100" />
+                          <input type="text" placeholder="Suche..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-base md:text-xs font-bold outline-none focus:ring-1 focus:ring-blue-100" />
                       </div>
                   </div>
                   
@@ -631,7 +631,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                   <div className="md:hidden p-4 space-y-3">
                       <div className="relative mb-4">
                           <Search size={16} className="absolute left-3 top-3 text-gray-400" />
-                          <input type="text" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-medium outline-none" />
+                          <input type="text" placeholder="Suchen..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-base md:text-sm font-medium outline-none" />
                       </div>
                       {filteredExpenses.map(e => {
                           const { matchTotal, matchedItems } = getMatchData(e);
