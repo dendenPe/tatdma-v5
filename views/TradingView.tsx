@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, DollarSign, ChevronLeft, ChevronRight, Calendar as CalendarIcon, TrendingUp } from 'lucide-react';
 import { AppData, Trade, DayEntry } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';
@@ -164,6 +164,9 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   const dayName = dateObj.toLocaleDateString('de-DE', { weekday: 'long' });
   const dayDisplay = dateObj.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
+  // Calculated Gross for Display
+  const grossTotal = (entry.total || 0) + (entry.fees || 0);
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* HEADER WITH NAVIGATION */}
@@ -220,25 +223,27 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
             </div>
             
             <div className="p-6 space-y-4">
-              <div className="flex gap-4">
-                <div className="flex-1 space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Netto PnL (nach Gebühren) $</label>
-                  <input 
-                    type="number"
-                    value={entry.total}
-                    readOnly
-                    style={{ colorScheme: 'light' }}
-                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-xl font-bold focus:ring-2 focus:ring-blue-500 outline-none ${entry.total >= 0 ? 'text-green-600' : 'text-red-600'}`}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="w-1/3 space-y-1.5">
-                   <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Gebühren $</label>
-                   <div className="w-full px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-lg font-bold text-red-400 flex items-center gap-1">
-                      <DollarSign size={14} />
-                      {entry.fees?.toFixed(2) || '0.00'}
-                   </div>
-                </div>
+              
+              {/* NEW BREAKDOWN SUMMARY CARD */}
+              <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200">
+                  <div className="text-center p-2 border-r border-gray-200">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase">Brutto PnL</p>
+                      <p className={`text-sm font-black ${grossTotal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {grossTotal.toFixed(2)}
+                      </p>
+                  </div>
+                  <div className="text-center p-2 border-r border-gray-200">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase">Kommissionen</p>
+                      <p className="text-sm font-black text-red-500">
+                          -{(entry.fees || 0).toFixed(2)}
+                      </p>
+                  </div>
+                  <div className="text-center p-2 bg-white rounded-lg border border-gray-100 shadow-sm">
+                      <p className="text-[9px] font-bold text-blue-500 uppercase">Netto PnL</p>
+                      <p className={`text-lg font-black ${entry.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {entry.total.toFixed(2)} $
+                      </p>
+                  </div>
               </div>
 
               <div className="space-y-3">

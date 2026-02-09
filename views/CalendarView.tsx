@@ -23,7 +23,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 interface Props {
   data: AppData;
   onUpdate: (data: AppData) => void;
-  targetDate?: Date | null; // NEW: Prop to jump to a specific date
+  targetDate?: Date | null;
 }
 
 const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
@@ -33,7 +33,6 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   const widgetRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Effect to react to navigation from other tabs (like Statistics)
   useEffect(() => {
       if (targetDate) {
           setCurrentDate(new Date(targetDate));
@@ -53,8 +52,8 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
         "width": "100%",
         "height": "100%",
         "locale": "de_DE",
-        "importanceFilter": "1", // Nur wichtige Daten (High Impact)
-        "countryFilter": "us"    // Nur USA
+        "importanceFilter": "1",
+        "countryFilter": "us"
       });
       widgetRef.current.appendChild(script);
     }
@@ -110,44 +109,53 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   };
 
   const stats = monthStats();
-  const selectedEntry = selectedDay ? data.trades[selectedDay] || { total: 0, note: '', trades: [], screenshots: [] } : null;
+  const selectedEntry = selectedDay ? data.trades[selectedDay] || { total: 0, note: '', trades: [], screenshots: [], fees: 0 } : null;
+
+  // --- RECALCULATION HELPER ---
+  const recalculateEntry = (entry: DayEntry): DayEntry => {
+      const gross = entry.trades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+      const fees = entry.trades.reduce((sum, t) => sum + (Number(t.fee) || 0), 0);
+      return { ...entry, fees, total: gross - fees };
+  };
 
   const handleUpdateTrade = (idx: number, field: keyof Trade, val: any) => {
-    if (!selectedDay) return;
-    const newEntry = { ...selectedEntry! };
+    if (!selectedDay || !selectedEntry) return;
+    const newEntry = { ...selectedEntry };
     newEntry.trades = [...newEntry.trades];
     newEntry.trades[idx] = { ...newEntry.trades[idx], [field]: val };
-    newEntry.total = newEntry.trades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+    
+    // Auto Recalc
+    const updatedEntry = recalculateEntry(newEntry);
     
     const newData = { ...data };
-    newData.trades[selectedDay] = newEntry;
+    newData.trades[selectedDay] = updatedEntry;
     onUpdate(newData);
   };
 
   const addTrade = () => {
-    if (!selectedDay) return;
+    if (!selectedDay || !selectedEntry) return;
     const newTrade: Trade = {
       inst: 'ES',
       qty: 1,
       pnl: 0,
+      fee: 0,
       start: '09:30',
       end: '10:00',
       tag: '',
       strategy: 'Long-Cont.'
     };
-    const newEntry = { ...selectedEntry!, trades: [...selectedEntry!.trades, newTrade] };
+    const newEntry = { ...selectedEntry, trades: [...selectedEntry.trades, newTrade] };
     const newData = { ...data };
-    newData.trades[selectedDay] = newEntry;
+    newData.trades[selectedDay] = recalculateEntry(newEntry);
     onUpdate(newData);
   };
 
   const removeTrade = (idx: number) => {
-    if (!selectedDay) return;
-    const newEntry = { ...selectedEntry! };
+    if (!selectedDay || !selectedEntry) return;
+    const newEntry = { ...selectedEntry };
     newEntry.trades = newEntry.trades.filter((_, i) => i !== idx);
-    newEntry.total = newEntry.trades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
     const newData = { ...data };
-    newData.trades[selectedDay] = newEntry;
+    newData.trades[selectedDay] = recalculateEntry(newEntry);
     onUpdate(newData);
   };
 
@@ -197,27 +205,31 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
     return diff;
   };
 
+  // --- FIXED WATERFALL LOGIC (NET PNL) ---
   const getWaterfallData = () => {
     if (!selectedEntry) return [];
     let cumulative = 0;
     return selectedEntry.trades.map((t, i) => {
+      // Calculate Net PnL per trade for the chart
+      const netPnl = (Number(t.pnl) || 0) - (Number(t.fee) || 0);
       const start = cumulative;
-      cumulative += t.pnl;
+      cumulative += netPnl;
       return {
         name: `${t.inst} #${i + 1}`,
-        pnl: t.pnl,
+        pnl: netPnl,
         display: [start, cumulative],
-        color: t.pnl >= 0 ? '#10b981' : '#ef4444'
+        color: netPnl >= 0 ? '#10b981' : '#ef4444'
       };
     });
   };
 
   const waterfallData = getWaterfallData();
-  const chartWidth = Math.min(waterfallData.length * 60 + 100, 500); // Dynamic width based on trade count
+  const chartWidth = Math.min(waterfallData.length * 60 + 100, 500);
 
   return (
     <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 pb-32">
       <div className="flex-1 space-y-6">
+        {/* HEADER STATS */}
         <div className="flex flex-col sm:flex-row items-center justify-between bg-white p-4 rounded-2xl border border-gray-100 shadow-sm gap-4">
           <div className="flex items-center gap-4 w-full justify-between sm:justify-start sm:w-auto">
             <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -244,6 +256,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
           </div>
         </div>
 
+        {/* CALENDAR GRID */}
         <div className="grid grid-cols-7 gap-1 lg:gap-2">
           {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
             <div key={d} className="py-2 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{d}</div>
@@ -282,7 +295,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
         </div>
       </div>
 
-      {selectedDay && (
+      {selectedDay && selectedEntry && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center p-2 lg:p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200 touch-none"
           onPaste={handlePaste}
@@ -290,12 +303,16 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
           <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[90vh] lg:h-auto lg:max-h-[95vh] animate-in zoom-in-95 duration-200">
             <div className="p-4 lg:p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 shrink-0">
               <div className="flex items-center gap-4">
-                <div className={`w-10 h-10 lg:w-12 lg:h-12 rounded-2xl flex items-center justify-center text-white font-black shadow-lg ${ (selectedEntry?.total || 0) >= 0 ? 'bg-green-500' : 'bg-red-500'}`}>
+                <div className={`w-10 h-10 lg:w-12 lg:h-12 rounded-2xl flex items-center justify-center text-white font-black shadow-lg ${ (selectedEntry.total || 0) >= 0 ? 'bg-green-500' : 'bg-red-500'}`}>
                   {selectedDay.split('-')[2]}
                 </div>
                 <div>
                   <h3 className="text-lg lg:text-xl font-black text-gray-800 tracking-tight">Tagesansicht</h3>
-                  <p className="text-[10px] lg:text-xs font-bold text-gray-400 uppercase tracking-widest">{new Date(selectedDay).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: '2-digit' })}</p>
+                  <div className="flex gap-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      <span>PnL: {selectedEntry.total.toFixed(2)} $</span>
+                      <span>•</span>
+                      <span>Fees: {selectedEntry.fees?.toFixed(2)} $</span>
+                  </div>
                 </div>
               </div>
               <button onClick={() => setSelectedDay(null)} className="p-2 hover:bg-gray-200 rounded-xl transition-colors text-gray-400"><X size={24} /></button>
@@ -304,7 +321,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
             <div className="flex-1 overflow-y-auto p-4 lg:p-8 space-y-6 lg:space-y-8" style={{ overscrollBehavior: 'none' }}>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="space-y-4">
-                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2"><TrendingUp size={14} className="text-blue-500" /> PnL Verlauf (Waterfall)</h4>
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2"><TrendingUp size={14} className="text-blue-500" /> Netto PnL Verlauf (Fees inkl.)</h4>
                   <div className="h-[250px] lg:h-[300px] bg-gray-50 rounded-2xl p-4 border border-gray-100 flex items-center justify-center overflow-hidden">
                     <div className="w-full h-full flex justify-center items-center">
                        {waterfallData.length > 0 ? (
@@ -323,7 +340,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
                                           <div className="bg-white p-3 rounded-xl shadow-xl border border-gray-100">
                                             <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{data.name}</p>
                                             <p className={`text-sm font-black ${data.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                              {data.pnl >= 0 ? '+' : ''}{data.pnl.toFixed(2)} $
+                                              {data.pnl >= 0 ? '+' : ''}{data.pnl.toFixed(2)} $ (Netto)
                                             </p>
                                           </div>
                                         );
@@ -356,17 +373,36 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
                     </button>
                   </div>
                   <div className="space-y-3">
-                    {selectedEntry?.trades.map((t, idx) => (
+                    {selectedEntry.trades.map((t, idx) => (
                       <div key={idx} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <input type="text" value={t.inst} onChange={(e) => handleUpdateTrade(idx, 'inst', e.target.value)} className="w-20 font-black text-blue-600 outline-none uppercase text-sm" />
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          {/* Left Group: Inst + Qty */}
                           <div className="flex items-center gap-2">
-                             <input type="number" value={t.qty} onChange={(e) => handleUpdateTrade(idx, 'qty', parseInt(e.target.value))} className="w-12 text-center text-xs font-bold bg-gray-50 rounded p-1 outline-none" />
-                             <span className="text-[10px] font-bold text-gray-300 uppercase">Qty</span>
+                              <input type="text" value={t.inst} onChange={(e) => handleUpdateTrade(idx, 'inst', e.target.value)} className="w-16 sm:w-20 font-black text-blue-600 outline-none uppercase text-sm" />
+                              <div className="flex items-center gap-1 bg-gray-50 rounded p-1">
+                                 <input type="number" value={t.qty} onChange={(e) => handleUpdateTrade(idx, 'qty', parseInt(e.target.value))} className="w-10 sm:w-12 text-center text-xs font-bold bg-transparent outline-none" />
+                                 <span className="text-[10px] font-bold text-gray-300 uppercase">Qty</span>
+                              </div>
                           </div>
-                          <input type="number" value={t.pnl} onChange={(e) => handleUpdateTrade(idx, 'pnl', parseFloat(e.target.value))} className={`flex-1 text-right font-black outline-none ${t.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`} />
-                          <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500"><Trash2 size={16} /></button>
+                          
+                          {/* Right Group: Fee, PnL, Delete */}
+                          <div className="flex items-center gap-2 sm:gap-4 flex-1 justify-end">
+                              {/* Fee */}
+                              <div className="flex items-center gap-1">
+                                 <span className="hidden sm:inline text-[10px] font-bold text-gray-300 uppercase">Fee:</span>
+                                 <input type="number" value={t.fee || 0} onChange={(e) => handleUpdateTrade(idx, 'fee', parseFloat(e.target.value))} className="w-12 text-right text-xs font-bold text-red-400 bg-red-50 rounded p-1 outline-none" />
+                              </div>
+
+                              <input 
+                                type="number" 
+                                value={t.pnl} 
+                                onChange={(e) => handleUpdateTrade(idx, 'pnl', parseFloat(e.target.value))} 
+                                className={`w-20 sm:w-28 text-right font-black outline-none bg-transparent ${t.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`} 
+                              />
+                              <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
+                          </div>
                         </div>
+
                         <div className="grid grid-cols-2 gap-3">
                           <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-100">
                              <Clock size={14} className="text-gray-400" />
@@ -440,11 +476,10 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
                  <div className="space-y-4">
                     <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
                       Screenshots Gallerie
-                      <span className="text-gray-300 font-bold">{selectedEntry?.screenshots?.length || 0} / 10</span>
+                      <span className="text-gray-300 font-bold">{selectedEntry.screenshots?.length || 0} / 10</span>
                     </h5>
-                    {/* HIER WURDEN DIE ÄNDERUNGEN GEMACHT: Grid padding und Bild-Hover */}
                     <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto overflow-x-visible p-2">
-                       {selectedEntry?.screenshots?.map((id) => (
+                       {selectedEntry.screenshots?.map((id) => (
                          <div key={id} className="relative aspect-video rounded-xl bg-gray-100 group shadow-sm border border-gray-100">
                            <img 
                              src={screenshotPreviews[id] || ''} 
@@ -457,7 +492,6 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
                              }}
                            />
                            
-                           {/* Trash button oben rechts im Container, nicht skalierend */}
                            <button 
                              onClick={(e) => {
                                e.stopPropagation();
@@ -470,7 +504,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
                            </button>
                          </div>
                        ))}
-                       {(!selectedEntry?.screenshots || selectedEntry.screenshots.length === 0) && (
+                       {(!selectedEntry.screenshots || selectedEntry.screenshots.length === 0) && (
                          <div className="col-span-2 py-12 flex flex-col items-center justify-center bg-gray-50/30 rounded-2xl border border-gray-100 border-dashed">
                            <Paperclip size={24} className="text-gray-200" />
                            <p className="text-[10px] font-bold text-gray-300 uppercase mt-2">Keine Anhänge</p>
@@ -483,7 +517,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
               <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
                 <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Tagesnotizen</h5>
                 <textarea 
-                   value={selectedEntry?.note} 
+                   value={selectedEntry.note} 
                    onChange={(e) => {
                      const newData = { ...data };
                      newData.trades[selectedDay!] = { ...selectedEntry!, note: e.target.value };
