@@ -10,9 +10,25 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="TaTDMA">
     <meta name="format-detection" content="telephone=no">
-    <title>TaTDMA v5 - Notes & Docs</title>
+    <title>TaTDMA v5e</title>
     <!-- Tailwind via CDN für Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        gray: {
+                            850: '#1f2937',
+                            900: '#111827',
+                            950: '#030712',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
         /* Standardverhalten für Body, aber Zoom erlauben */
         html, body {
@@ -21,6 +37,11 @@
             position: fixed;
             overflow: hidden;
             background-color: #f9fafb;
+        }
+        /* Dark Mode Body Fix */
+        html.dark body {
+            background-color: #111827;
+            color: #f3f4f6;
         }
         #root {
             height: 100%;
@@ -47,9 +68,14 @@
             background: rgba(0,0,0,0.2);
             border-radius: 10px;
         }
+        .dark .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.05);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+        }
     </style>
 
-<link rel="stylesheet" href="/index.css">
 <script type="importmap">
 {
   "imports": {
@@ -72,9 +98,9 @@
   }
 }
 </script>
-  <script type="module" crossorigin src="/tatdma-v5/assets/index-DQlIZP1Z.js"></script>
+  <script type="module" crossorigin src="/tatdma-v5/assets/index-BZNF8ROJ.js"></script>
 </head>
-<body class="bg-gray-50 antialiased text-gray-900">
+<body class="bg-gray-50 dark:bg-gray-900 antialiased text-gray-900 dark:text-gray-100">
     <div id="root"></div>
 </body>
 </html>
