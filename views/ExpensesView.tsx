@@ -954,7 +954,158 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
       )}
 
-      {/* ... Other Modals ... */}
+      {/* BUDGET MODAL */}
+      {isBudgetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+              <h3 className="font-black text-xl text-gray-800">Budget festlegen</h3>
+              <button onClick={() => setIsBudgetModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full">
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+              {EXPENSE_CATEGORIES.map(cat => (
+                <div key={cat} className="flex items-center gap-3">
+                  <div className="w-8 flex items-center justify-center text-gray-400">
+                    <CategoryIcon cat={cat} />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-sm font-bold text-gray-700">{cat}</label>
+                  </div>
+                  <div className="w-32">
+                    <input
+                      type="number"
+                      value={budgetForm[cat] || ''}
+                      onChange={(e) => setBudgetForm({...budgetForm, [cat]: parseFloat(e.target.value) || 0})}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex gap-3 mt-8 pt-6 border-t border-gray-100">
+              <button 
+                onClick={() => setIsBudgetModalOpen(false)} 
+                className="px-6 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={saveBudgets} 
+                className="flex-1 px-8 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
+              >
+                <Check size={18}/> Budgets speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW EXPENSE MODAL */}
+      {isAdding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+              <h3 className="font-black text-xl text-gray-800">Neue Ausgabe</h3>
+              <button onClick={() => setIsAdding(false)} className="p-2 hover:bg-gray-100 rounded-full">
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
+                  <input
+                    type="date"
+                    value={newExpense.date || ''}
+                    onChange={(e) => setNewExpense({...newExpense, date: e.target.value})}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
+                  <select
+                    value={newExpense.currency || 'CHF'}
+                    onChange={(e) => setNewExpense({...newExpense, currency: e.target.value})}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                  >
+                    <option value="CHF">CHF</option>
+                    <option value="EUR">EUR</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Beschreibung</label>
+                <input
+                  type="text"
+                  value={newExpense.merchant || ''}
+                  onChange={(e) => handleMerchantChange(e.target.value, false)}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                  placeholder="z.B. Migros"
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newExpense.amount || ''}
+                  onChange={(e) => setNewExpense({...newExpense, amount: parseFloat(e.target.value)})}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                  placeholder="0.00"
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
+                <select
+                  value={newExpense.category || 'Sonstiges'}
+                  onChange={(e) => setNewExpense({...newExpense, category: e.target.value as any})}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                >
+                  {EXPENSE_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Einzelpositionen (optional)</label>
+                <textarea
+                  value={editItemsText}
+                  onChange={(e) => setEditItemsText(e.target.value)}
+                  className="w-full h-24 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono outline-none resize-none"
+                  placeholder="Name: Preis pro Stück"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-8 pt-6 border-t border-gray-100">
+              <button 
+                onClick={() => setIsAdding(false)} 
+                className="px-6 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={addExpense}
+                disabled={!newExpense.amount || !newExpense.merchant}
+                className="flex-1 px-8 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+              >
+                <Plus size={18}/> Hinzufügen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
     </div>
   );

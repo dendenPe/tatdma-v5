@@ -209,6 +209,7 @@ export interface NoteDocument {
   userNote?: string; // NEW: Manual user comments/notes on top of the document
   isExpense?: boolean; // NEW: Flag for Daily Expenses
   expenseId?: string; // NEW: ID of the linked ExpenseEntry
+  attachments?: string[]; // NEW: Array of DB IDs for attachments (PDFs)
 }
 
 // --- NEW IN v5b: DAILY EXPENSES ---
