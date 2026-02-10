@@ -48,15 +48,26 @@ export class ImportService {
   private static parseNum(str: any): number {
     if (!str) return 0;
     let s = String(str).replace(/["']/g, '').trim();
+    // remove currency symbols like CHF, USD, etc. if they are attached
+    s = s.replace(/[A-Z]{3}$/, '').trim();
+    
     if (!s || s === '-' || s === '--') return 0;
     
+    // Heuristic: If comma appears after the last dot, it might be the decimal separator (EU style)
     const lastDot = s.lastIndexOf('.');
     const lastComma = s.lastIndexOf(',');
 
-    if (lastComma > lastDot) {
-        s = s.replace(/\./g, '').replace(',', '.');
-    } else {
-        s = s.replace(/,/g, '');
+    if (lastComma > -1 && lastDot > -1) {
+        if (lastComma > lastDot) {
+            // 1.000,00 -> Replace dots, swap comma to dot
+            s = s.replace(/\./g, '').replace(',', '.');
+        } else {
+            // 1,000.00 -> Remove commas
+            s = s.replace(/,/g, '');
+        }
+    } else if (lastComma > -1) {
+        // Safe bet: Remove all commas if it looks like thousands separator
+        s = s.replace(/,/g, ''); 
     }
     
     return parseFloat(s) || 0;
@@ -67,14 +78,26 @@ export class ImportService {
       const rows = this.parseCSV(csvText);
       if (rows.length === 0) return {};
 
-      const headerLine = rows[0].map(h => h.toLowerCase().trim());
-      const headerString = headerLine.join(',');
+      // Scan first few rows to find header
+      let parserType = 'generic';
 
-      if (headerString.includes('fill price') && headerString.includes('net amount') && headerString.includes('side')) {
-          return this.parseIBKRClientPortalCSV(rows);
+      for(let i=0; i<Math.min(rows.length, 10); i++) {
+          const line = rows[i].map(h => h.toLowerCase().trim().replace(/[\ufeff]/g, ''));
+          const str = line.join(',');
+          
+          if (str.includes('fill price') && (str.includes('net amount') || str.includes('netamount')) && str.includes('side')) {
+              parserType = 'ibkr_portal';
+              break;
+          }
+          if (str.includes('details_json') || str.includes('notiz')) {
+              parserType = 'journal';
+              break;
+          }
       }
-      
-      if (headerString.includes('details_json') || headerString.includes('notiz')) {
+
+      if (parserType === 'ibkr_portal') {
+          return this.parseIBKRClientPortalCSV(rows);
+      } else if (parserType === 'journal') {
           return this.parseJournalCSV(rows);
       }
       
@@ -83,7 +106,19 @@ export class ImportService {
 
   private static parseIBKRClientPortalCSV(rows: string[][]): Record<string, DayEntry> {
       const result: Record<string, DayEntry> = {};
-      const headers = rows[0].map(h => h.trim().toLowerCase());
+      
+      // 1. DYNAMIC HEADER DETECTION
+      let headerIdx = -1;
+      for(let i=0; i<rows.length; i++) {
+          const line = rows[i].map(c => c.toLowerCase().trim().replace(/[\ufeff\r\n]/g, ''));
+          if (line.includes('symbol') && (line.includes('net amount') || line.includes('netamount'))) {
+              headerIdx = i;
+              break;
+          }
+      }
+      if (headerIdx === -1) return {};
+
+      const headers = rows[headerIdx].map(h => h.trim().toLowerCase().replace(/[\ufeff\r\n]/g, ''));
 
       const idxSymbol = headers.indexOf('symbol');
       const idxSide = headers.indexOf('side');
@@ -95,91 +130,201 @@ export class ImportService {
 
       if (idxSymbol === -1 || idxNet === -1) return {};
 
-      const aggs: Record<string, Record<string, { 
-          buyVol: number, 
-          sellVol: number, 
-          fees: number, 
-          qty: number, 
-          times: string[]
-      }>> = {};
+      // --- 2. EXTRACT RAW EXECUTIONS ---
+      interface RawExec {
+          symbol: string;
+          side: 'buy' | 'sell';
+          qty: number;
+          price: number;
+          date: string; // YYYY-MM-DD
+          time: string; // HH:MM
+          dateTime: number; // timestamp for sorting
+          fee: number; // Total fee for this execution
+          unitFee: number; // Fee per 1 qty
+          netAmount: number; // for multiplier check
+      }
 
-      for (let i = 1; i < rows.length; i++) {
+      const executions: RawExec[] = [];
+
+      for (let i = headerIdx + 1; i < rows.length; i++) {
           const row = rows[i];
-          if (row.length < headers.length) continue;
+          if (row.length < 2) continue; // Skip empty lines
 
           const timeRaw = row[idxTime]; 
           if (!timeRaw) continue;
           
-          const dateStr = timeRaw.split(' ')[0]; 
-          const timeStr = timeRaw.split(' ')[1]?.substring(0, 5) || '00:00';
+          // Robust Date Parsing
+          let dateStr = '';
+          let timeStr = '00:00';
+          let timestamp = 0;
 
-          const side = row[idxSide].toLowerCase(); 
-          const qty = this.parseNum(row[idxQty]);
+          try {
+              // Handle formats like "2025-02-10 15:30:00" or "20250210;153000" or "10/02/2025"
+              const cleanTimeRaw = timeRaw.replace(/,/g, ' ').replace(/;/g, ' ').trim();
+              
+              if (cleanTimeRaw.match(/^\d{4}-\d{2}-\d{2}/)) {
+                  // ISO Format
+                  const parts = cleanTimeRaw.split(' ');
+                  dateStr = parts[0];
+                  timeStr = parts[1]?.substring(0, 5) || '00:00';
+                  timestamp = new Date(cleanTimeRaw).getTime();
+              } else {
+                  // Fallback: Try Date.parse, if fails, manual split
+                  const d = new Date(cleanTimeRaw);
+                  if (!isNaN(d.getTime())) {
+                      dateStr = d.toISOString().split('T')[0];
+                      timeStr = d.toISOString().split('T')[1].substring(0, 5);
+                      timestamp = d.getTime();
+                  } else {
+                      // Basic fallback
+                      dateStr = cleanTimeRaw.split(' ')[0];
+                  }
+              }
+          } catch (e) {
+              console.warn("Date parse error", timeRaw);
+              continue; 
+          }
+
+          const sideRaw = row[idxSide]?.toLowerCase() || '';
+          let side: 'buy' | 'sell' = 'buy';
+          if (sideRaw.includes('sell') || sideRaw === 's' || sideRaw === 'sld') side = 'sell';
+
+          const qty = Math.abs(this.parseNum(row[idxQty]));
           const price = this.parseNum(row[idxPrice]);
-          const netAmount = Math.abs(this.parseNum(row[idxNet])); 
           const fee = Math.abs(this.parseNum(row[idxComm]));
           let symbol = row[idxSymbol];
 
-          let multiplier = 1;
-          if (price > 0 && qty > 0) {
-              multiplier = Math.round(netAmount / (price * qty));
+          // Parse Net Amount Robustly (can contain codes)
+          let netAmount = 0;
+          if (row[idxNet]) {
+              const cleanNet = row[idxNet].replace(/[A-Z]{3}/g, '').trim();
+              netAmount = Math.abs(this.parseNum(cleanNet));
           }
 
-          if (multiplier === 50) symbol = "ES " + symbol;
-          else if (multiplier === 5) symbol = "MES " + symbol;
-          else if (multiplier === 20) symbol = "NQ " + symbol;
-          else if (multiplier === 2) symbol = "MNQ " + symbol;
-
-          if (!aggs[dateStr]) aggs[dateStr] = {};
-          if (!aggs[dateStr][symbol]) {
-              aggs[dateStr][symbol] = { buyVol: 0, sellVol: 0, fees: 0, qty: 0, times: [] };
-          }
-
-          const entry = aggs[dateStr][symbol];
-          entry.fees += fee;
-          entry.qty += qty;
-          entry.times.push(timeStr);
-
-          if (side === 'buy' || side === 'b') {
-              entry.buyVol += netAmount;
-          } else {
-              entry.sellVol += netAmount;
+          if (qty > 0) {
+              executions.push({
+                  symbol,
+                  side,
+                  qty,
+                  price,
+                  date: dateStr,
+                  time: timeStr,
+                  dateTime: timestamp,
+                  fee,
+                  unitFee: fee / qty,
+                  netAmount
+              });
           }
       }
 
-      Object.keys(aggs).forEach(date => {
-          const dayData = aggs[date];
-          const trades: Trade[] = [];
-          let dayTotalPnL = 0;
-          let dayTotalFees = 0;
+      // --- 3. SORT BY TIME ---
+      executions.sort((a, b) => a.dateTime - b.dateTime);
 
-          Object.keys(dayData).forEach(symbol => {
-              const d = dayData[symbol];
-              let grossPnL = d.sellVol - d.buyVol;
-              
-              const trade: Trade = {
-                  inst: symbol,
-                  qty: d.qty, 
-                  pnl: grossPnL, 
-                  fee: d.fees,
-                  start: d.times.sort()[0],
-                  end: d.times.sort()[d.times.length - 1],
-                  tag: '',
-                  strategy: grossPnL >= 0 ? 'Long-Agg.' : 'Short-Agg.'
-              };
-              
-              trades.push(trade);
-              dayTotalPnL += (grossPnL - d.fees);
-              dayTotalFees += d.fees;
-          });
+      // --- 4. FIFO MATCHING ---
+      const inventory: Record<string, RawExec[]> = {};
+      const completedTrades: (Trade & { date: string })[] = [];
 
-          result[date] = {
-              total: dayTotalPnL,
-              fees: dayTotalFees,
-              trades: trades,
-              note: '',
-              screenshots: []
-          };
+      for (const exec of executions) {
+          if (!inventory[exec.symbol]) inventory[exec.symbol] = [];
+          const queue = inventory[exec.symbol];
+
+          // Logic: If queue is empty or matches side -> Open
+          // If queue has opposite side -> Close
+          const isOpen = queue.length === 0 || queue[0].side === exec.side;
+
+          if (isOpen) {
+              queue.push(exec);
+          } else {
+              // CLOSING TRADE
+              let remainingQty = exec.qty;
+              
+              while (remainingQty > 0 && queue.length > 0) {
+                  const openExec = queue[0];
+                  const matchQty = Math.min(remainingQty, openExec.qty);
+                  
+                  // DETERMINE MULTIPLIER
+                  // NetAmount ~= Price * Qty * Multiplier
+                  let multiplier = 1;
+                  if (openExec.netAmount !== 0 && openExec.price > 0) {
+                      multiplier = Math.abs(openExec.netAmount / (openExec.price * openExec.qty));
+                      // Snap to common multipliers
+                      if (Math.abs(multiplier - 50) < 1) multiplier = 50; // ES
+                      else if (Math.abs(multiplier - 5) < 0.1) multiplier = 5; // MES
+                      else if (Math.abs(multiplier - 20) < 0.5) multiplier = 20; // NQ
+                      else if (Math.abs(multiplier - 2) < 0.1) multiplier = 2; // MNQ
+                      else if (Math.abs(multiplier - 1000) < 10) multiplier = 1000; // CL
+                      else multiplier = Math.round(multiplier);
+                      if (multiplier === 0) multiplier = 1;
+                  }
+
+                  // PnL CALCULATION
+                  const priceDiff = exec.price - openExec.price;
+                  const direction = openExec.side === 'buy' ? 1 : -1; // 1 = Long, -1 = Short
+                  const grossPnL = priceDiff * matchQty * multiplier * direction;
+                  
+                  // Fee Calculation (Roundturn)
+                  // Closing Fee Part:
+                  const closingFeePart = exec.unitFee * matchQty;
+                  // Opening Fee Part:
+                  const openingFeePart = openExec.unitFee * matchQty;
+                  
+                  const totalRoundturnFee = closingFeePart + openingFeePart;
+
+                  // Prepend asset class to symbol if Future detected
+                  let displaySymbol = exec.symbol;
+                  if (multiplier === 50) displaySymbol = "ES " + displaySymbol;
+                  else if (multiplier === 5) displaySymbol = "MES " + displaySymbol;
+                  else if (multiplier === 20) displaySymbol = "NQ " + displaySymbol;
+                  else if (multiplier === 2) displaySymbol = "MNQ " + displaySymbol;
+
+                  const trade: Trade & { date: string } = {
+                      date: exec.date, // Trade date is closing date
+                      inst: displaySymbol,
+                      qty: parseFloat(matchQty.toFixed(4)), 
+                      pnl: parseFloat(grossPnL.toFixed(2)), 
+                      fee: parseFloat(totalRoundturnFee.toFixed(2)),
+                      start: openExec.time,
+                      end: exec.time,
+                      tag: '',
+                      strategy: direction === 1 ? 'Long-Cont.' : 'Short-Cont.' 
+                  };
+                  completedTrades.push(trade);
+
+                  remainingQty -= matchQty;
+                  openExec.qty -= matchQty;
+                  
+                  if (openExec.qty <= 0.0001) {
+                      queue.shift(); // Remove fully closed position
+                  }
+              }
+              
+              // If we oversold/overbought (flipping position), the remaining becomes a new open
+              if (remainingQty > 0.0001) {
+                  const remainderExec: RawExec = {
+                      ...exec,
+                      qty: remainingQty,
+                      fee: exec.unitFee * remainingQty, // Recalc total fee for remainder
+                      unitFee: exec.unitFee, // Unit fee stays same
+                      netAmount: (exec.netAmount / exec.qty) * remainingQty // Pro-rate net amount
+                  };
+                  queue.push(remainderExec);
+              }
+          }
+      }
+
+      // --- 5. GROUP BY DATE ---
+      completedTrades.forEach(t => {
+          if (!result[t.date]) {
+              result[t.date] = { total: 0, fees: 0, trades: [], note: '', screenshots: [] };
+          }
+          result[t.date].trades.push(t);
+          
+          // Recalculate Day Totals
+          const day = result[t.date];
+          const gross = day.trades.reduce((s, tr) => s + (tr.pnl || 0), 0);
+          const fees = day.trades.reduce((s, tr) => s + (tr.fee || 0), 0);
+          day.fees = fees;
+          day.total = gross - fees;
       });
 
       return result;

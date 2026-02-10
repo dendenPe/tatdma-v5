@@ -288,11 +288,20 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
           }
       });
 
+      // Find the most recent date in the import to switch view to
+      const importedDates = Object.keys(importedDays).sort();
+      const lastImportedDate = importedDates[importedDates.length - 1];
+
       onUpdate(newData);
-      if (importedDays[currentDate] || newData.trades[currentDate]) {
-          setEntry(newData.trades[currentDate]);
+      
+      if (lastImportedDate) {
+          setCurrentDate(lastImportedDate);
+          setEntry(newData.trades[lastImportedDate] || { total: 0, note: '', trades: [], screenshots: [], fees: 0 });
+          alert(`${count} Trades importiert. Wechsle zu ${lastImportedDate}.`);
+      } else {
+          if (importedDays[currentDate]) setEntry(importedDays[currentDate]);
+          alert(`${count} Trades importiert.`);
       }
-      alert(`${count} Trades importiert / aktualisiert.`);
       e.target.value = '';
     };
     reader.readAsText(file);
@@ -406,7 +415,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                     </button>
                     <label className="cursor-pointer text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 px-2 py-1 rounded-md">
                         <Upload size={12} /> Import
-                        <input type="file" className="hidden" accept=".csv" onChange={handleTradeImport} />
+                        <input type="file" className="hidden" accept=".csv, .txt" onChange={handleTradeImport} />
                     </label>
                     <button onClick={addTrade} className="text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 transition-colors">
                         <Plus size={14} /> Neu

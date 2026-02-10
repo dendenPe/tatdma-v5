@@ -15,10 +15,11 @@ import {
   Pie,
   ReferenceLine,
   AreaChart,
-  Area
+  Area,
+  Legend
 } from 'recharts';
 import { AppData, DayEntry, Trade } from '../types';
-import { TrendingUp, Clock, Target, Layers, FilterX, CalendarDays, Wallet, AlertTriangle, Activity, Calendar } from 'lucide-react';
+import { TrendingUp, Clock, Target, Layers, FilterX, CalendarDays, Wallet, AlertTriangle, Activity, Calendar, Coins } from 'lucide-react';
 
 interface Props {
   data: AppData;
@@ -32,7 +33,6 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
   const availableYears = useMemo(() => {
       const years = new Set<string>();
       Object.keys(data.trades).forEach(date => {
-          // FIX: Strictly validate date format (YYYY-MM-DD) to prevent notes or invalid keys from appearing as years
           if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
               const y = date.split('-')[0];
               if(y) years.add(y);
@@ -82,6 +82,7 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
       fullDate: date,
       displayDate: displayDate,
       pnl: Number(entry.total) || 0, // Net PnL
+      fee: Number(entry.fees) || 0,
       count: entry.trades ? entry.trades.length : 0
     };
   });
@@ -127,6 +128,7 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
           fullDate: `${key}-01`, 
           pnl: val.net,
           fees: val.fees,
+          negFees: -val.fees, // For chart display below axis
           gross: val.gross
       };
   }).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
@@ -147,7 +149,6 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
   let maxWinStreak = 0;
   let maxLossStreak = 0;
   
-  // Need to iterate strictly by day
   let streakCounter = 0;
   tradeData.forEach((day) => {
       if (day.pnl > 0) {
@@ -178,7 +179,8 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
   });
 
   const totalGrossPnL = allTrades.reduce((s, t) => s + (Number(t.pnl) || 0), 0);
-  const totalFees = allTrades.reduce((s, t) => s + (Number(t.fee) || 0), 0);
+  // Sum fees from Daily Entries to be safe (aggregated correctness)
+  const totalFees = validTradeEntries.reduce((s, [_, e]) => s + (Number(e.fees) || 0), 0);
   const totalNetPnL = totalGrossPnL - totalFees;
   const winRate = allTrades.length > 0 ? (wins.length / allTrades.length * 100).toFixed(1) : '0.0';
 
@@ -254,6 +256,17 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
 
         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
             <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-lg bg-red-50 text-red-500"><Coins size={16} /></div>
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kommissionen</span>
+            </div>
+            <div className="text-2xl font-black text-red-500">
+                -{totalFees.toLocaleString('de-CH', { minimumFractionDigits: 2 })} $
+            </div>
+            <p className="text-[9px] text-gray-400 mt-1">Total Fees</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+            <div className="flex items-center gap-3 mb-2">
               <div className="p-2 rounded-lg bg-blue-50 text-blue-500"><Target size={16} /></div>
               <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Profit Factor</span>
             </div>
@@ -269,15 +282,6 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
             <div className="text-2xl font-black text-gray-800">{winRate}%</div>
             <p className="text-[9px] text-gray-400 mt-1">{wins.length} Wins / {losses.length} Losses</p>
         </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-red-50 text-red-500"><AlertTriangle size={16} /></div>
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Max Drawdown</span>
-            </div>
-            <div className="text-2xl font-black text-red-600">{maxDrawdown.toLocaleString('de-CH', {maximumFractionDigits:0})} $</div>
-            <p className="text-[9px] text-gray-400 mt-1">Vom Höchststand</p>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -290,8 +294,8 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
               <p className="text-lg font-black text-red-600">-{avgLoss.toFixed(0)} $</p>
           </div>
           <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 text-center">
-              <span className="text-[10px] font-bold text-gray-400 uppercase">Streak (Aktuell)</span>
-              <p className={`text-lg font-black ${currentStreak >= 0 ? 'text-green-600' : 'text-red-600'}`}>{currentStreak > 0 ? '+' : ''}{currentStreak}</p>
+              <span className="text-[10px] font-bold text-gray-400 uppercase">Max Drawdown</span>
+              <p className="text-lg font-black text-red-600">{maxDrawdown.toFixed(0)} $</p>
           </div>
           <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 text-center">
               <span className="text-[10px] font-bold text-gray-400 uppercase">Bester Streak</span>
@@ -319,28 +323,30 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
              </div>
           </div>
 
-          {/* Drawdown Chart */}
+          {/* Daily Fees Chart */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-             <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-red-400">Drawdown (Vom Peak)</h4>
+             <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                 <Coins size={14} className="text-red-400" /> Tägliche Kommissionen
+             </h4>
              <div className="h-[300px]">
                <ResponsiveContainer width="100%" height="100%">
-                 <AreaChart data={equityData}>
+                 <BarChart data={tradeData}>
                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                    <XAxis dataKey="displayDate" fontSize={10} axisLine={false} tickLine={false} minTickGap={40} />
                    <YAxis fontSize={10} axisLine={false} tickLine={false} />
-                   <Tooltip formatter={(value: number) => [`${value.toFixed(2)} $`, 'Drawdown']} />
-                   <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="#fecaca" />
-                 </AreaChart>
+                   <Tooltip formatter={(value: number) => [`-${value.toFixed(2)} $`, 'Fee']} />
+                   <Bar dataKey="fee" fill="#f87171" radius={[4, 4, 4, 4]} />
+                 </BarChart>
                </ResponsiveContainer>
              </div>
           </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Monthly Net PnL Chart */}
+          {/* Monthly Net PnL Chart WITH FEES */}
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                  <CalendarDays size={14} className="text-blue-500" /> Monatsabschlüsse
+                  <CalendarDays size={14} className="text-blue-500" /> Monatsabschlüsse (Netto vs Fees)
               </h4>
               <div className="h-[250px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -372,11 +378,13 @@ const StatisticsView: React.FC<Props> = ({ data, onNavigateToCalendar }) => {
                         }}
                     />
                     <ReferenceLine y={0} stroke="#e5e7eb" />
-                    <Bar dataKey="pnl" radius={[4, 4, 4, 4]} barSize={30}>
+                    <Legend />
+                    <Bar dataKey="pnl" name="Net PnL" radius={[4, 4, 0, 0]} barSize={20}>
                       {monthlyData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#f87171'} />
+                        <Cell key={`cell-${index}`} fill={entry.pnl >= 0 ? '#3b82f6' : '#93c5fd'} />
                       ))}
                     </Bar>
+                    <Bar dataKey="negFees" name="Fees" fill="#f87171" radius={[0, 0, 4, 4]} barSize={20} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
