@@ -2,7 +2,7 @@
 {
   "name": "tatdma-v5",
   "private": true,
-  "version": "5.0.0-e",
+  "version": "5.0.0-f",
   "type": "module",
   "homepage": "https://dendenpe.github.io/tatdma-v5",
   "scripts": {
@@ -27,7 +27,17 @@
     "mammoth": "^1.6.0",
     "xlsx": "^0.18.5",
     "@google/genai": "*",
-    "heic2any": "^0.0.4"
+    "heic2any": "^0.0.4",
+    "@tiptap/react": "^2.2.4",
+    "@tiptap/pm": "^2.2.4",
+    "@tiptap/starter-kit": "^2.2.4",
+    "@tiptap/extension-image": "^2.2.4",
+    "@tiptap/extension-link": "^2.2.4",
+    "@tiptap/extension-table": "^2.2.4",
+    "@tiptap/extension-table-row": "^2.2.4",
+    "@tiptap/extension-table-cell": "^2.2.4",
+    "@tiptap/extension-table-header": "^2.2.4",
+    "@tiptap/extension-underline": "^2.2.4"
   },
   "devDependencies": {
     "@types/react": "^18.2.56",
