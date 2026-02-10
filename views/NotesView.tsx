@@ -8,12 +8,12 @@ import {
   Trash2, 
   Tag, 
   Inbox, 
-  PenTool, 
-  Loader2, 
-  Eye, 
-  Database, 
-  ScanLine, 
-  X, 
+  PenTool,
+  Loader2,
+  Eye,
+  Database,
+  ScanLine,
+  X,
   FileSpreadsheet, 
   FileType, 
   Image as ImageIcon, 
@@ -46,7 +46,15 @@ import {
   Share2,
   Maximize2,
   Minimize2,
-  Edit3
+  Edit3,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  ListOrdered,
+  Heading1,
+  Heading2,
+  Heading3,
+  Type
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // TIPTAP IMPORTS
@@ -59,8 +67,11 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { Image } from '@tiptap/extension-image';
 import { Link } from '@tiptap/extension-link';
 import { Underline } from '@tiptap/extension-underline';
+import { TextStyle } from '@tiptap/extension-text-style';
+import { Color } from '@tiptap/extension-color';
+import { TextAlign } from '@tiptap/extension-text-align';
 
-import { AppData, NoteDocument, DocCategory, TaxExpense, CATEGORY_STRUCTURE } from '../types';
+import { AppData, NoteDocument, DocCategory, CATEGORY_STRUCTURE, TaxExpense } from '../types';
 import { DocumentService } from '../services/documentService';
 import { VaultService } from '../services/vaultService';
 import { DBService } from '../services/dbService';
@@ -79,10 +90,8 @@ interface Props {
   isVaultConnected?: boolean;
 }
 
-// Map the new constant to UI friendly definition
 const CATEGORY_KEYS = Object.keys(CATEGORY_STRUCTURE);
 
-// Mapping helper for migration
 const OLD_TO_NEW_MAP: Record<string, string> = {
     'Steuern': 'Steuern & Abgaben',
     'Rechnungen': 'Finanzen & Bankwesen',
@@ -95,41 +104,23 @@ const OLD_TO_NEW_MAP: Record<string, string> = {
     'Verträge': 'Recht & Verträge'
 };
 
-// --- HELPER: Strip HTML for Preview ---
 const stripHtml = (html: string) => {
    const tmp = document.createElement("DIV");
    tmp.innerHTML = html;
    return tmp.textContent || tmp.innerText || "";
 };
 
-// --- HELPER: Parse Search Query (AND via ';', OR via '/') ---
 const parseSearchQuery = (query: string): { mode: 'AND' | 'OR', terms: string[] } => {
     const raw = query.toLowerCase();
-    
-    // Priority 1: Semicolon for AND (Explicit)
     if (raw.includes(';')) {
-        return { 
-            mode: 'AND', 
-            terms: raw.split(';').map(t => t.trim()).filter(t => t.length > 0) 
-        };
+        return { mode: 'AND', terms: raw.split(';').map(t => t.trim()).filter(t => t.length > 0) };
     }
-    
-    // Priority 2: Slash for OR
     if (raw.includes('/')) {
-        return { 
-            mode: 'OR', 
-            terms: raw.split('/').map(t => t.trim()).filter(t => t.length > 0) 
-        };
+        return { mode: 'OR', terms: raw.split('/').map(t => t.trim()).filter(t => t.length > 0) };
     }
-
-    // Priority 3: Default (Spaces) -> Treat as AND
-    return { 
-        mode: 'AND', 
-        terms: raw.split(/\s+/).filter(t => t.trim().length > 0) 
-    };
+    return { mode: 'AND', terms: raw.split(/\s+/).filter(t => t.trim().length > 0) };
 };
 
-// --- SUB-COMPONENT: PDF THUMBNAIL ---
 const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: () => void, onRemove?: () => void }) => {
     const [thumbUrl, setThumbUrl] = useState<string | null>(null);
 
@@ -184,21 +175,17 @@ const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: 
     );
 };
 
-// --- SUB-COMPONENT: PDF PAGE RENDERER ---
 const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale: number, searchQuery: string, isLensEnabled: boolean }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const renderTaskRef = useRef<any>(null); // Ref to hold the active render task
+    const renderTaskRef = useRef<any>(null);
     const [isHovering, setIsHovering] = useState(false);
     const [lensPos, setLensPos] = useState({ x: 0, y: 0 });
 
     useEffect(() => {
         const renderPage = async () => {
             if (!canvasRef.current) return;
-            
-            if (renderTaskRef.current) {
-                try { renderTaskRef.current.cancel(); } catch (e) {}
-            }
+            if (renderTaskRef.current) { try { renderTaskRef.current.cancel(); } catch (e) {} }
 
             const viewport = page.getViewport({ scale });
             const canvas = canvasRef.current;
@@ -222,31 +209,25 @@ const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale
                     renderTaskRef.current = null;
 
                     if (searchQuery && searchQuery.length > 2) {
-                        const { terms } = parseSearchQuery(searchQuery);
-                        if (terms.length > 0) {
-                            const textContent = await page.getTextContent();
-                            context.save();
-                            context.scale(outputScale, outputScale);
-                            
-                            textContent.items.forEach((item: any) => {
-                                // Check if this item contains ANY of the search terms
-                                if (terms.some(t => item.str.toLowerCase().includes(t))) {
-                                    const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-                                    const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3]));
-                                    context.fillStyle = 'rgba(255, 255, 0, 0.4)';
-                                    context.fillRect(tx[4], tx[5] - fontHeight * 0.8, item.width * scale, fontHeight);
-                                }
-                            });
-                            context.restore();
-                        }
+                        const textContent = await page.getTextContent();
+                        const terms = parseSearchQuery(searchQuery).terms;
+                        context.save();
+                        context.scale(outputScale, outputScale);
+                        textContent.items.forEach((item: any) => {
+                            if (terms.some(t => item.str.toLowerCase().includes(t))) {
+                                const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+                                const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3]));
+                                context.fillStyle = 'rgba(255, 255, 0, 0.4)';
+                                context.fillRect(tx[4], tx[5] - fontHeight * 0.8, item.width * scale, fontHeight);
+                            }
+                        });
+                        context.restore();
                     }
                 } catch(e) {}
             }
         };
         renderPage();
-        return () => {
-            if (renderTaskRef.current) { try { renderTaskRef.current.cancel(); } catch (e) { } }
-        };
+        return () => { if (renderTaskRef.current) { try { renderTaskRef.current.cancel(); } catch (e) { } } };
     }, [page, scale, searchQuery]);
 
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -386,7 +367,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
 
   const notesList = (Object.values(data.notes || {}) as NoteDocument[]).sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
   
-  // --- UPDATED FILTER LOGIC FOR ADVANCED SEARCH ---
   const filteredNotes = useMemo(() => {
     return notesList.filter(note => {
       const matchesMainCat = selectedCat === 'All' || note.category === selectedCat;
@@ -401,7 +381,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           if (mode === 'AND') {
               matchesSearch = terms.every(term => cleanContent.includes(term));
           } else {
-              // OR mode
               matchesSearch = terms.some(term => cleanContent.includes(term));
           }
       }
@@ -447,17 +426,33 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedNote } });
   };
 
+  const addAttachment = async (blob: Blob) => {
+      if (!selectedNoteId) return;
+      const fileId = `att_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+      await DBService.saveFile(fileId, blob);
+      const currentAttachments = data.notes[selectedNoteId].attachments || [];
+      updateSelectedNote({ attachments: [...currentAttachments, fileId] });
+  };
+
   // --- TIPTAP EDITOR SETUP ---
   const editor = useEditor({
     extensions: [
       StarterKit,
+      TextStyle,
+      Color,
+      TextAlign.configure({
+        types: ['heading', 'paragraph', 'image'],
+      }),
       Table.configure({
         resizable: true,
       }),
       TableRow,
       TableHeader,
       TableCell,
-      Image,
+      Image.configure({
+          inline: true,
+          allowBase64: true,
+      }),
       Link.configure({
         openOnClick: true,
       }),
@@ -471,7 +466,56 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
     },
     editorProps: {
         attributes: {
-            class: 'prose max-w-none focus:outline-none min-h-[200px] tiptap-content' // Added shared class
+            class: 'prose max-w-none focus:outline-none min-h-[200px] tiptap-content'
+        },
+        handlePaste: (view, event, slice) => {
+            const items = Array.from(event.clipboardData?.items || []);
+            for (const item of items) {
+                if (item.type.indexOf("image") === 0) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (readerEvent) => {
+                            const node = view.state.schema.nodes.image.create({
+                                src: readerEvent.target?.result
+                            });
+                            const transaction = view.state.tr.replaceSelectionWith(node);
+                            view.dispatch(transaction);
+                        };
+                        reader.readAsDataURL(file);
+                        return true; // Handled
+                    }
+                }
+            }
+            return false;
+        },
+        handleDrop: (view, event, slice, moved) => {
+            if (!moved && event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+                const files = Array.from(event.dataTransfer.files);
+                let handled = false;
+                
+                files.forEach(file => {
+                    if (file.type === 'application/pdf') {
+                        // PDF -> Sidebar Attachment
+                        addAttachment(file);
+                        handled = true;
+                    } else if (file.type.startsWith('image/')) {
+                        // Image -> Insert into Editor
+                        const reader = new FileReader();
+                        reader.onload = (readerEvent) => {
+                            const node = view.state.schema.nodes.image.create({
+                                src: readerEvent.target?.result
+                            });
+                            const transaction = view.state.tr.replaceSelectionWith(node);
+                            view.dispatch(transaction);
+                        };
+                        reader.readAsDataURL(file);
+                        handled = true;
+                    }
+                });
+                return handled;
+            }
+            return false;
         }
     }
   });
@@ -480,29 +524,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   useEffect(() => {
       if (editor && selectedNoteId && data.notes[selectedNoteId]) {
           const content = data.notes[selectedNoteId].content;
-          // Only update if content is different to avoid cursor jumping
           if (editor.getHTML() !== content) {
               editor.commands.setContent(content);
           }
       }
   }, [selectedNoteId, editor]);
-
-  const addAttachment = async (blob: Blob, type: 'pdf' | 'image') => {
-      if (!selectedNoteId) return;
-      const fileId = `att_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
-      await DBService.saveFile(fileId, blob);
-
-      if (type === 'pdf') {
-          const currentAttachments = data.notes[selectedNoteId].attachments || [];
-          updateSelectedNote({ attachments: [...currentAttachments, fileId] });
-      } else {
-          // Insert Image Inline using TipTap
-          if (editor) {
-              const url = URL.createObjectURL(blob);
-              editor.chain().focus().setImage({ src: url }).run();
-          }
-      }
-  };
 
   const removeAttachment = (fileId: string) => {
       if (!selectedNoteId) return;
@@ -671,7 +697,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       e.target.value = '';
   };
 
-  // --- UPDATED SEARCH PREVIEW RENDERER ---
   const renderNotePreview = (content: string, query: string) => {
       const cleanContent = stripHtml(content).replace(/\s+/g, ' ').trim();
       const { terms } = parseSearchQuery(query);
@@ -697,7 +722,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       const snippet = cleanContent.substring(start, end);
       
       // Split by any of the terms to highlight
-      // Escape terms for regex
       const safeTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       const regex = new RegExp(`(${safeTerms.join('|')})`, 'gi');
       
@@ -803,39 +827,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       onUpdate({ ...data, categoryRules: updatedRules });
   };
 
-  // --- RICH TEXT ACTIONS ---
-  const execCmd = (command: string, value: string | undefined = undefined) => {
-      // For simple commands if we had custom toolbar, but here we use editor instance mostly
-      // This function might be legacy or for custom buttons outside editor context
-      // But we use editor.chain()... mostly.
-      // If we keep it for backward compat:
-      document.execCommand(command, false, value);
-  };
-
-  // --- TABLE LOGIC ---
-  const [tableModal, setTableModal] = useState<{open: boolean, rows: number, cols: number}>({ open: false, rows: 3, cols: 3 });
-  const [activeTableCtx, setActiveTableCtx] = useState<{ table: HTMLTableElement, rowIndex: number, colIndex: number } | null>(null);
-  // Refs
-  const editorRef = useRef<HTMLDivElement>(null);
-
-  const insertTable = () => {
-      editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-  };
-
-  // For manipulating table via context menu using TipTap commands
-  const manipulateTable = (action: string) => {
-      if (!editor) return;
-      switch(action) {
-          case 'addRowAbove': editor.chain().focus().addRowBefore().run(); break;
-          case 'addRowBelow': editor.chain().focus().addRowAfter().run(); break;
-          case 'addColLeft': editor.chain().focus().addColumnBefore().run(); break;
-          case 'addColRight': editor.chain().focus().addColumnAfter().run(); break;
-          case 'delRow': editor.chain().focus().deleteRow().run(); break;
-          case 'delCol': editor.chain().focus().deleteColumn().run(); break;
-          case 'delTable': editor.chain().focus().deleteTable().run(); break;
-      }
-  };
-
   return (
     <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-hidden relative min-h-[calc(100dvh-150px)] w-full">
       {/* 1. SIDEBAR */}
@@ -918,24 +909,45 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
              </>
          ) : (
              <div className="flex flex-col h-full bg-white relative">
-                 <div className="flex items-center justify-between p-2 border-b border-gray-100 bg-gray-50 shrink-0">
-                     <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                        <button onClick={() => setIsEditMode(false)} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Beenden"><ArrowLeft size={16}/></button>
-                        <button onClick={() => editor?.chain().focus().toggleBold().run()} className={`p-1.5 rounded ${editor?.isActive('bold') ? 'bg-gray-200' : 'hover:bg-gray-100'}`}><Bold size={14}/></button>
-                        <button onClick={() => editor?.chain().focus().toggleItalic().run()} className={`p-1.5 rounded ${editor?.isActive('italic') ? 'bg-gray-200' : 'hover:bg-gray-100'}`}><Italic size={14}/></button>
-                        <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200' : 'hover:bg-gray-100'}`}><UnderlineIcon size={14}/></button>
-                        
-                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                        
-                        <button onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} className="p-1.5 hover:bg-gray-200 rounded"><TableIcon size={14}/></button>
-                        <button onClick={() => editor?.chain().focus().addColumnBefore().run()} className="p-1.5 hover:bg-gray-200 rounded text-[10px] font-bold">+Col</button>
-                        <button onClick={() => editor?.chain().focus().addRowBefore().run()} className="p-1.5 hover:bg-gray-200 rounded text-[10px] font-bold">+Row</button>
-                        
-                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                 <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-100 bg-gray-50 shrink-0">
+                    <button onClick={() => setIsEditMode(false)} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Beenden"><ArrowLeft size={16}/></button>
+                    
+                    {/* FORMATTING TOOLBAR */}
+                    <button onClick={() => editor?.chain().focus().toggleBold().run()} className={`p-1.5 rounded ${editor?.isActive('bold') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Bold size={14}/></button>
+                    <button onClick={() => editor?.chain().focus().toggleItalic().run()} className={`p-1.5 rounded ${editor?.isActive('italic') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Italic size={14}/></button>
+                    <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><UnderlineIcon size={14}/></button>
+                    
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 1 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H1</button>
+                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 2 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H2</button>
+                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 3 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H3</button>
 
-                        <label className="p-1.5 hover:bg-gray-200 rounded cursor-pointer"><ImagePlus size={14}/><input type="file" className="hidden" accept="image/*" onChange={handleImageUpload}/></label>
-                     </div>
-                     <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest px-2">TipTap Editor</div>
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+                    <button onClick={() => editor?.chain().focus().toggleBulletList().run()} className={`p-1.5 rounded ${editor?.isActive('bulletList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><List size={14}/></button>
+                    <button onClick={() => editor?.chain().focus().toggleOrderedList().run()} className={`p-1.5 rounded ${editor?.isActive('orderedList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><ListOrdered size={14}/></button>
+
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('left').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'left' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignLeft size={14}/></button>
+                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('center').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'center' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignCenter size={14}/></button>
+                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('right').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'right' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignRight size={14}/></button>
+
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer">
+                        <Type size={14} style={{color: editor?.getAttributes('textStyle').color}} />
+                        <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()} />
+                    </div>
+
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    
+                    <button onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><TableIcon size={14}/></button>
+                    
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+                    <label className="p-1.5 hover:bg-gray-200 rounded cursor-pointer text-gray-600"><ImagePlus size={14}/><input type="file" className="hidden" accept="image/*" onChange={handleImageUpload}/></label>
                  </div>
                  
                  <div className="px-4 py-3 border-b border-gray-50">
@@ -1010,7 +1022,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                     </div>
                     <div className="flex-1 overflow-y-auto p-6 space-y-8">
                         {selectedNote.type === 'note' ? (
-                            // --- FIX: Apply .tiptap-content class here ---
                             <div className="prose max-w-none text-sm text-gray-700 tiptap-content" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
                         ) : (
                             <div className="space-y-4">
