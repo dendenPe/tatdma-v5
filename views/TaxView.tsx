@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileDown, 
@@ -35,7 +36,8 @@ import {
   FileCode,
   Loader2,
   Sparkles,
-  Calendar
+  Calendar,
+  FileSpreadsheet
 } from 'lucide-react';
 import { AppData, TaxExpense, BankBalance, SalaryEntry, ChildDetails, AlimonyDetails } from '../types';
 import { DBService } from '../services/dbService';
@@ -106,7 +108,24 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `TaxExport_${selectedYear}.xml`;
+      a.download = `eTax_Data_${selectedYear}.xml`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+  };
+
+  const handleExportSecuritiesCSV = () => {
+      const csv = XmlExportService.generateSecuritiesCSV(data, selectedYear);
+      if (!csv) {
+          alert("Keine Portfolio-Daten für dieses Jahr gefunden.");
+          return;
+      }
+      // Add BOM for Excel compatibility
+      const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Wertschriften_${selectedYear}.csv`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -929,12 +948,19 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               </div>
            </div>
            
-           <div className="flex justify-end pt-8 border-t border-gray-200 gap-4">
+           <div className="flex flex-wrap justify-end pt-8 border-t border-gray-200 gap-4">
+              <button 
+                onClick={handleExportSecuritiesCSV}
+                className="px-8 py-5 bg-green-50 text-green-700 font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-green-100 transition-all flex items-center gap-2 border border-green-100"
+              >
+                <FileSpreadsheet size={18} /> Wertschriften CSV (Import)
+              </button>
+
               <button 
                 onClick={handleExportXml}
                 className="px-8 py-5 bg-gray-100 text-gray-700 font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-gray-200 transition-all flex items-center gap-2"
               >
-                <FileCode size={18} /> eTax XML Export
+                <FileCode size={18} /> Steuerdaten XML
               </button>
               
               <button 

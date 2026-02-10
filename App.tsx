@@ -18,7 +18,11 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Key,
-  CreditCard // New Icon for Expenses Tab
+  CreditCard,
+  Bot,
+  Search as SearchIcon,
+  Moon,
+  Sun
 } from 'lucide-react';
 import { AppData, APP_VERSION } from './types';
 import { VaultService } from './services/vaultService';
@@ -31,12 +35,14 @@ import StatisticsView from './views/StatisticsView';
 import SystemView from './views/SystemView';
 import NotesView from './views/NotesView';
 import DashboardView from './views/DashboardView';
-import ExpensesView from './views/ExpensesView'; // IMPORT
+import ExpensesView from './views/ExpensesView'; 
+import AiAssistant from './components/AiAssistant';
+import GlobalSearch from './components/GlobalSearch';
 
 const INITIAL_DATA: AppData = {
   trades: {},
   salary: {},
-  salaryCertificates: {}, // NEW
+  salaryCertificates: {}, 
   tax: {
     personal: { name: '', address: '', zip: '', city: '', id: '' },
     expenses: [],
@@ -48,12 +54,14 @@ const INITIAL_DATA: AppData = {
   currentPortfolioId: 'portfolio_1',
   notes: {},
   categoryRules: {},
-  dailyExpenses: {}, // INIT NEW FIELD
-  recurringExpenses: [] // INIT NEW FIELD
+  dailyExpenses: {},
+  recurringExpenses: [],
+  budgets: {}, 
+  savingsGoals: [] 
 };
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('dashboard'); // Default to Dashboard
+  const [activeTab, setActiveTab] = useState('dashboard'); 
   const [data, setData] = useState<AppData>(INITIAL_DATA);
   const [vaultStatus, setVaultStatus] = useState<'none' | 'connected' | 'locked'>('none');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -67,12 +75,48 @@ const App: React.FC = () => {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
   
+  // AI Assistant State
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [isAiEnabled, setIsAiEnabled] = useState(() => {
+      return localStorage.getItem('tatdma_ai_enabled') !== 'false';
+  });
+  
+  // Global Search State
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+
+  // Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+      return localStorage.getItem('tatdma_theme') === 'dark';
+  });
+  
   const [globalYear, setGlobalYear] = useState(new Date().getFullYear().toString());
-  // Fix: Use ReturnType<typeof setTimeout> instead of NodeJS.Timeout to be environment agnostic
+  
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Apply Dark Mode Class
   useEffect(() => {
-    // Check for API Key on mount
+      if (isDarkMode) {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('tatdma_theme', 'dark');
+      } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('tatdma_theme', 'light');
+      }
+  }, [isDarkMode]);
+
+  // Global Key Shortcut
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+              e.preventDefault();
+              setShowGlobalSearch(prev => !prev);
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     const storedKey = localStorage.getItem('tatdma_api_key');
     if (!storedKey) {
         setShowKeyModal(true);
@@ -87,13 +131,15 @@ const App: React.FC = () => {
           ...parsed,
           trades: parsed.trades || prev.trades,
           salary: parsed.salary || prev.salary,
-          salaryCertificates: parsed.salaryCertificates || prev.salaryCertificates || {}, // MERGE NEW
+          salaryCertificates: parsed.salaryCertificates || prev.salaryCertificates || {},
           tax: { ...prev.tax, ...(parsed.tax || {}) },
           portfolios: parsed.portfolios || prev.portfolios,
           notes: parsed.notes || prev.notes,
           categoryRules: parsed.categoryRules || prev.categoryRules,
-          dailyExpenses: parsed.dailyExpenses || prev.dailyExpenses || {}, // Merge new field
-          recurringExpenses: parsed.recurringExpenses || prev.recurringExpenses || [] // Merge new field
+          dailyExpenses: parsed.dailyExpenses || prev.dailyExpenses || {}, 
+          recurringExpenses: parsed.recurringExpenses || prev.recurringExpenses || [],
+          budgets: parsed.budgets || prev.budgets || {}, 
+          savingsGoals: parsed.savingsGoals || prev.savingsGoals || [] 
         }));
       } catch (e) {
         console.error("Data corruption detected", e);
@@ -132,12 +178,18 @@ const App: React.FC = () => {
       if(apiKeyInput.trim()) {
           localStorage.setItem('tatdma_api_key', apiKeyInput.trim());
           setShowKeyModal(false);
-          // Optional: Reload to ensure services pick it up fresh if needed, but localStorage is sync
           window.location.reload(); 
       }
   };
 
-  // Helper to jump from Stats to Calendar
+  const handleNavigate = (tabId: string, params?: any) => {
+      setActiveTab(tabId);
+      if (params && params.noteId) {
+          // Logic for note selection could be added if NotesView accepted a selectedId prop via navigation,
+          // currently it handles state internally. For now, it just switches tab.
+      }
+  };
+
   const handleNavigateToCalendar = (dateStr: string) => {
       setCalendarTargetDate(new Date(dateStr));
       setActiveTab('calendar');
@@ -145,23 +197,23 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={setActiveTab} />;
+      case 'dashboard': return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={handleNavigate} />;
       case 'trading': return <TradingView data={data} onUpdate={saveToLocalStorage} />;
       case 'calendar': return <CalendarView data={data} onUpdate={saveToLocalStorage} targetDate={calendarTargetDate} />;
       case 'holdings': return <HoldingsView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'salary': return <SalaryView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
       case 'tax': return <TaxView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
-      case 'expenses': return <ExpensesView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />; // NEW
-      case 'notes': return <NotesView data={data} onUpdate={saveToLocalStorage} />;
+      case 'expenses': return <ExpensesView data={data} onUpdate={saveToLocalStorage} globalYear={globalYear} />;
+      case 'notes': return <NotesView data={data} onUpdate={saveToLocalStorage} isVaultConnected={vaultStatus === 'connected'} />;
       case 'stats': return <StatisticsView data={data} onNavigateToCalendar={handleNavigateToCalendar} />;
       case 'system': return <SystemView data={data} onUpdate={saveToLocalStorage} />;
-      default: return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={setActiveTab} />;
+      default: return <DashboardView data={data} onUpdate={saveToLocalStorage} onNavigate={handleNavigate} />;
     }
   };
 
   const navItems = [
     { id: 'dashboard', label: 'Cockpit', icon: PieChart },
-    { id: 'expenses', label: 'Ausgaben', icon: CreditCard }, // NEW TAB
+    { id: 'expenses', label: 'Ausgaben', icon: CreditCard },
     { id: 'trading', label: 'Trading', icon: LayoutDashboard },
     { id: 'calendar', label: 'Kalender', icon: CalendarIcon },
     { id: 'holdings', label: 'Wertpapiere', icon: Wallet },
@@ -174,7 +226,7 @@ const App: React.FC = () => {
 
   const currentYearNum = new Date().getFullYear();
   const availableYears = Array.from({ length: Math.max(2026 - 2023 + 1, currentYearNum - 2023 + 2) }, (_, i) => (2023 + i).toString());
-  const showGlobalYearSelector = ['holdings', 'salary', 'tax', 'expenses'].includes(activeTab); // Added expenses
+  const showGlobalYearSelector = ['holdings', 'salary', 'tax', 'expenses'].includes(activeTab); 
 
   const handleTabChange = (id: string) => {
     setActiveTab(id);
@@ -182,8 +234,14 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 text-gray-900 font-sans relative">
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans relative">
       
+      {isAiEnabled && (
+          <AiAssistant data={data} isOpen={showAiAssistant} onClose={() => setShowAiAssistant(false)} />
+      )}
+      
+      <GlobalSearch isOpen={showGlobalSearch} onClose={() => setShowGlobalSearch(false)} data={data} onNavigate={handleNavigate} />
+
       {/* API KEY MODAL */}
       {showKeyModal && (
           <div className="fixed inset-0 z-[100] bg-gray-900/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -194,9 +252,9 @@ const App: React.FC = () => {
                       </div>
                       <h3 className="text-2xl font-black text-gray-800">Google Gemini API Key</h3>
                       <p className="text-sm text-gray-500 leading-relaxed">
-                          Damit die AI-Funktionen (Dokumenten-Scan, Auto-Kategorisierung) funktionieren, wird dein persönlicher API Key benötigt.
+                          Damit die AI-Funktionen (Dokumenten-Scan, Auto-Kategorisierung, Chat) funktionieren, wird dein persönlicher API Key benötigt.
                           <br/><br/>
-                          <strong>Sicherheit:</strong> Der Key wird nur lokal in deinem Browser gespeichert und niemals an einen Server (außer Google) gesendet.
+                          <strong>Sicherheit:</strong> Der Key wird nur lokal in deinem Browser gespeichert.
                       </p>
                       <input 
                         type="password" 
@@ -227,7 +285,7 @@ const App: React.FC = () => {
       <aside className={`
         fixed lg:static inset-y-0 left-0 z-50 
         ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-64'} 
-        w-64 bg-[#16325c] flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out shadow-2xl lg:shadow-none
+        w-64 bg-[#16325c] dark:bg-gray-950 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out shadow-2xl lg:shadow-none
         ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         {/* Header */}
@@ -241,12 +299,10 @@ const App: React.FC = () => {
              </div>
           )}
           
-          {/* Mobile Close Button */}
           <button onClick={() => setMobileMenuOpen(false)} className="lg:hidden text-white/70 hover:text-white">
             <X size={24} />
           </button>
 
-          {/* Desktop Collapse Toggle */}
           <button 
              onClick={() => setSidebarCollapsed(!sidebarCollapsed)} 
              className={`hidden lg:block text-blue-200 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 ${sidebarCollapsed ? 'mx-auto' : ''}`}
@@ -319,27 +375,57 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 bg-gray-50 h-full transition-all duration-300">
-        <header className="bg-white border-b border-gray-200 flex-shrink-0 z-10 sticky top-0 shadow-sm lg:shadow-none pt-[env(safe-area-inset-top)]">
-          <div className="h-16 flex items-center justify-between px-4 lg:px-8">
+      <main className="flex-1 flex flex-col min-w-0 bg-gray-50 dark:bg-gray-900 h-full transition-all duration-300 relative">
+        <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 z-10 sticky top-0 shadow-sm lg:shadow-none pt-[env(safe-area-inset-top)]">
+          <div className="h-16 flex items-center justify-between px-3 lg:px-8">
             <div className="flex items-center gap-3">
-               <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+               <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
                   <Menu size={24} />
                </button>
-               <h2 className="text-lg font-bold text-gray-700 capitalize truncate max-w-[150px] md:max-w-none">
+               {/* Reduced max-width for title on mobile to make room for buttons */}
+               <h2 className="text-lg font-bold text-gray-700 dark:text-gray-100 capitalize truncate max-w-[90px] sm:max-w-[150px] md:max-w-none">
                  {navItems.find(i => i.id === activeTab)?.label}
                </h2>
             </div>
             
-            <div className="flex items-center gap-2 md:gap-6">
+            <div className="flex items-center gap-1 sm:gap-2 md:gap-4">
+                <button 
+                    onClick={() => {
+                        const newState = !isAiEnabled;
+                        setIsAiEnabled(newState);
+                        localStorage.setItem('tatdma_ai_enabled', String(newState));
+                        if(!newState) setShowAiAssistant(false);
+                    }}
+                    className={`p-2 rounded-lg transition-colors ${isAiEnabled ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-400' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                    title={isAiEnabled ? "AI Assistent deaktivieren" : "AI Assistent aktivieren"}
+                >
+                    <Bot size={20} />
+                </button>
+
+                <button 
+                    onClick={() => setShowGlobalSearch(true)} 
+                    className="p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg" 
+                    title="Suche (Cmd+K)"
+                >
+                    <SearchIcon size={20} />
+                </button>
+
+                <button 
+                    onClick={() => setIsDarkMode(!isDarkMode)} 
+                    className="p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                    title={isDarkMode ? "Light Mode" : "Dark Mode"}
+                >
+                    {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+                </button>
+
                {showGlobalYearSelector && (
-                 <div className="flex items-center gap-2 bg-blue-50 px-2 py-1 md:px-3 md:py-1.5 rounded-lg border border-blue-100 animate-in fade-in duration-300">
-                   <CalendarDays size={16} className="text-blue-500 hidden md:block"/>
-                   <span className="text-xs font-bold text-gray-500 uppercase tracking-wide hidden md:block">Jahr:</span>
+                 <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 md:px-3 md:py-1.5 rounded-lg border border-blue-100 dark:border-blue-800 animate-in fade-in duration-300 hidden sm:flex">
+                   <CalendarDays size={16} className="text-blue-500 dark:text-blue-400 hidden md:block"/>
+                   <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide hidden md:block">Jahr:</span>
                    <select 
                      value={globalYear}
                      onChange={(e) => setGlobalYear(e.target.value)}
-                     className="bg-transparent font-black text-blue-700 text-sm outline-none cursor-pointer"
+                     className="bg-transparent font-black text-blue-700 dark:text-blue-300 text-sm outline-none cursor-pointer"
                    >
                      {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
                    </select>
@@ -356,6 +442,22 @@ const App: React.FC = () => {
         <section className="flex-1 overflow-y-auto p-4 md:p-8 overscroll-contain pb-[calc(2rem+env(safe-area-inset-bottom))]">
           {renderContent()}
         </section>
+
+        {/* AI ASSISTANT FAB - ENHANCED VISIBILITY */}
+        {isAiEnabled && (
+            <button 
+                onClick={() => setShowAiAssistant(true)}
+                className="fixed bottom-6 right-6 md:bottom-10 md:right-10 w-16 h-16 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-transform z-[100] group animate-in zoom-in duration-300"
+                title="AI Assistent öffnen"
+            >
+                <Bot size={28} className="group-hover:animate-pulse" />
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-pink-500"></span>
+                </span>
+            </button>
+        )}
+
       </main>
     </div>
   );

@@ -52,4 +52,25 @@ export class DBService {
       req.onsuccess = () => resolve(req.result);
     });
   }
+
+  static async getEstimatedSize(): Promise<number> {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_IMAGES, 'readonly');
+        const store = tx.objectStore(STORE_IMAGES);
+        let size = 0;
+        const req = store.openCursor();
+        req.onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest).result;
+            if (cursor) {
+                const blob = cursor.value as Blob;
+                if (blob && blob.size) size += blob.size;
+                cursor.continue();
+            } else {
+                resolve(size);
+            }
+        };
+        req.onerror = () => resolve(0); // Fail silently
+    });
+  }
 }

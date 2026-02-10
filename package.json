@@ -2,7 +2,7 @@
 {
   "name": "tatdma-v5",
   "private": true,
-  "version": "5.0.0-a",
+  "version": "5.0.0-e",
   "type": "module",
   "homepage": "https://dendenpe.github.io/tatdma-v5",
   "scripts": {

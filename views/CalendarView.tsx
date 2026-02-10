@@ -15,11 +15,13 @@ import {
   Timer,
   Paperclip,
   Image as ImageIconAlt,
-  Wallet
+  Wallet,
+  Calendar,
+  List
 } from 'lucide-react';
 import { AppData, DayEntry, Trade } from '../types';
 import { DBService } from '../services/dbService';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, LineChart, Line } from 'recharts';
 
 interface Props {
   data: AppData;
@@ -31,6 +33,8 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [screenshotPreviews, setScreenshotPreviews] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<'month' | 'week'>('month'); // VIEW MODE
+  
   const widgetRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -89,6 +93,12 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1));
   };
 
+  const changeWeek = (offset: number) => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() + (offset * 7));
+    setCurrentDate(newDate);
+  };
+
   const getDayPnL = (day: number) => {
     const key = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return data.trades[key]?.total || 0;
@@ -99,6 +109,8 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
     let fees = 0;
     let wins = 0;
     let count = 0;
+    let equityCurve: { day: number, value: number }[] = [];
+    let runningTotal = 0;
     
     for (let i = 1; i <= daysInMonth; i++) {
       const key = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
@@ -107,6 +119,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
       if (entry) {
           if (entry.total !== 0) {
               total += entry.total;
+              runningTotal += entry.total;
               if (entry.total > 0) wins++;
               count++;
           }
@@ -114,8 +127,10 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
               fees += entry.fees;
           }
       }
+      // Add point for curve if changed
+      if (count > 0 && entry?.total !== 0) equityCurve.push({ day: i, value: runningTotal });
     }
-    return { total, fees, wr: count > 0 ? (wins / count * 100).toFixed(0) : '0', count };
+    return { total, fees, wr: count > 0 ? (wins / count * 100).toFixed(0) : '0', count, equityCurve };
   };
 
   const stats = monthStats();
@@ -134,7 +149,6 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
     newEntry.trades = [...newEntry.trades];
     newEntry.trades[idx] = { ...newEntry.trades[idx], [field]: val };
     
-    // Auto Recalc
     const updatedEntry = recalculateEntry(newEntry);
     
     const newData = { ...data };
@@ -145,14 +159,7 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   const addTrade = () => {
     if (!selectedDay || !selectedEntry) return;
     const newTrade: Trade = {
-      inst: 'ES',
-      qty: 1,
-      pnl: 0,
-      fee: 0,
-      start: '09:30',
-      end: '10:00',
-      tag: '',
-      strategy: 'Long-Cont.'
+      inst: 'ES', qty: 1, pnl: 0, fee: 0, start: '09:30', end: '10:00', tag: '', strategy: 'Long-Cont.'
     };
     const newEntry = { ...selectedEntry, trades: [...selectedEntry.trades, newTrade] };
     const newData = { ...data };
@@ -215,12 +222,10 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
     return diff;
   };
 
-  // --- FIXED WATERFALL LOGIC (NET PNL) ---
   const getWaterfallData = () => {
     if (!selectedEntry) return [];
     let cumulative = 0;
     return selectedEntry.trades.map((t, i) => {
-      // Calculate Net PnL per trade for the chart
       const netPnl = (Number(t.pnl) || 0) - (Number(t.fee) || 0);
       const start = cumulative;
       cumulative += netPnl;
@@ -236,22 +241,113 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
   const waterfallData = getWaterfallData();
   const chartWidth = Math.min(waterfallData.length * 60 + 100, 500);
 
+  // WEEKLY VIEW LOGIC
+  const currentWeekStart = new Date(currentDate);
+  const day = currentWeekStart.getDay();
+  const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1); 
+  currentWeekStart.setDate(diff); // Monday of current week
+  
+  const currentWeekEnd = new Date(currentWeekStart);
+  currentWeekEnd.setDate(currentWeekStart.getDate() + 6); // Sunday
+
+  const renderGrid = () => {
+      if (viewMode === 'month') {
+          return (
+            <div className="grid grid-cols-7 gap-1 lg:gap-2">
+                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
+                    <div key={d} className="py-2 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{d}</div>
+                ))}
+                {Array.from({ length: startDay }).map((_, i) => <div key={`empty-${i}`} className="aspect-square bg-gray-50/30 rounded-xl lg:rounded-2xl" />)}
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                    const day = i + 1;
+                    const dayStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const pnl = getDayPnL(day);
+                    const isWeekend = (startDay + i) % 7 >= 5;
+                    
+                    // Streak Check (Simple)
+                    const prevDayStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day-1).padStart(2, '0')}`;
+                    const prevPnL = data.trades[prevDayStr]?.total || 0;
+                    const isStreak = (pnl > 0 && prevPnL > 0) || (pnl < 0 && prevPnL < 0);
+
+                    return (
+                    <div 
+                        key={day} 
+                        onClick={() => setSelectedDay(dayStr)}
+                        className={`aspect-square relative p-1 lg:p-2 rounded-xl lg:rounded-2xl border flex flex-col items-center justify-center transition-all cursor-pointer group active:scale-95 ${
+                        pnl !== 0 
+                        ? (pnl >= 0 ? 'bg-white border-green-500 shadow-sm shadow-green-100' : 'bg-white border-red-500 shadow-sm shadow-red-100') 
+                        : (isWeekend ? 'bg-gray-100/50 border-transparent' : 'bg-white border-gray-100 hover:border-blue-300')
+                        } ${isStreak ? (pnl >= 0 ? 'ring-2 ring-green-100' : 'ring-2 ring-red-100') : ''}`}
+                    >
+                        <span className={`text-[10px] lg:text-xs font-black absolute top-1 left-2 ${pnl !== 0 ? 'text-gray-400' : 'text-gray-300'}`}>{day}</span>
+                        {pnl !== 0 && <span className={`text-[10px] lg:text-sm font-black ${pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{pnl > 0 ? '+' : ''}{Math.round(pnl)}</span>}
+                    </div>
+                    );
+                })}
+            </div>
+          );
+      } else {
+          // Weekly View
+          const weekDays = Array.from({length: 7}, (_, i) => {
+              const d = new Date(currentWeekStart);
+              d.setDate(d.getDate() + i);
+              return d;
+          });
+
+          return (
+              <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
+                  {weekDays.map(d => {
+                      const dayStr = d.toISOString().split('T')[0];
+                      const entry = data.trades[dayStr];
+                      const pnl = entry?.total || 0;
+                      return (
+                          <div key={dayStr} onClick={() => setSelectedDay(dayStr)} className={`h-32 md:h-64 rounded-2xl border p-4 flex flex-col cursor-pointer transition-all hover:scale-[1.02] ${pnl !== 0 ? (pnl >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200') : 'bg-white border-gray-100'}`}>
+                              <div className="flex justify-between items-center mb-2">
+                                  <span className="font-black text-gray-400 text-xs uppercase">{d.toLocaleDateString('de-DE', { weekday: 'short' })}</span>
+                                  <span className="font-bold text-gray-300 text-xs">{d.getDate()}.</span>
+                              </div>
+                              <div className="flex-1 flex items-center justify-center">
+                                  {pnl !== 0 ? (
+                                      <span className={`text-xl font-black ${pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{pnl > 0 ? '+' : ''}{pnl.toFixed(0)}</span>
+                                  ) : <span className="text-gray-200 font-bold text-sm">-</span>}
+                              </div>
+                              {entry?.trades && entry.trades.length > 0 && (
+                                  <div className="text-[10px] text-center text-gray-400 font-bold">{entry.trades.length} Trades</div>
+                              )}
+                          </div>
+                      );
+                  })}
+              </div>
+          );
+      }
+  };
+
+  const headerTitle = viewMode === 'month'
+      ? currentDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+      : `${currentWeekStart.getDate()}. - ${currentWeekEnd.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })}`;
+
   return (
     <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 pb-32">
       <div className="flex-1 space-y-6">
-        {/* HEADER STATS */}
+        {/* HEADER STATS & NAV */}
         <div className="flex flex-col sm:flex-row items-center justify-between bg-white p-4 rounded-2xl border border-gray-100 shadow-sm gap-4">
           <div className="flex items-center gap-4 w-full justify-between sm:justify-start sm:w-auto">
-            <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+            <button onClick={() => viewMode === 'month' ? changeMonth(-1) : changeWeek(-1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <ChevronLeft size={20} />
             </button>
-            <h3 className="text-xl font-black text-gray-800 min-w-[150px] text-center tracking-tight">
-              {currentDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
+            <h3 className="text-xl font-black text-gray-800 min-w-[200px] text-center tracking-tight">
+              {headerTitle}
             </h3>
-            <button onClick={() => changeMonth(1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+            <button onClick={() => viewMode === 'month' ? changeMonth(1) : changeWeek(1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <ChevronRight size={20} />
             </button>
           </div>
+          
+          <div className="flex items-center gap-2">
+              <button onClick={() => setViewMode('month')} className={`p-2 rounded-lg ${viewMode === 'month' ? 'bg-blue-100 text-blue-600' : 'bg-gray-50 text-gray-400'}`}><Calendar size={16}/></button>
+              <button onClick={() => setViewMode('week')} className={`p-2 rounded-lg ${viewMode === 'week' ? 'bg-blue-100 text-blue-600' : 'bg-gray-50 text-gray-400'}`}><List size={16}/></button>
+          </div>
+
           <div className="flex gap-2 w-full sm:w-auto justify-center flex-wrap">
             <div className="flex-1 sm:flex-none px-4 py-2 bg-green-50 rounded-xl border border-green-100 flex items-center justify-center gap-2">
               <TrendingUp size={16} className="text-green-500" />
@@ -260,7 +356,6 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
               </span>
             </div>
             
-            {/* Monthly Fees Badge */}
             <div className="flex-1 sm:flex-none px-4 py-2 bg-red-50 rounded-xl border border-red-100 flex items-center justify-center gap-2" title="Monatliche Kommissionen">
               <Wallet size={16} className="text-red-500" />
               <span className="text-sm font-black text-red-600">
@@ -276,32 +371,20 @@ const CalendarView: React.FC<Props> = ({ data, onUpdate, targetDate }) => {
         </div>
 
         {/* CALENDAR GRID */}
-        <div className="grid grid-cols-7 gap-1 lg:gap-2">
-          {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(d => (
-            <div key={d} className="py-2 text-center text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{d}</div>
-          ))}
-          {Array.from({ length: startDay }).map((_, i) => <div key={`empty-${i}`} className="aspect-square bg-gray-50/30 rounded-xl lg:rounded-2xl" />)}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1;
-            const dayStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const pnl = getDayPnL(day);
-            const isWeekend = (startDay + i) % 7 >= 5;
-            return (
-              <div 
-                key={day} 
-                onClick={() => setSelectedDay(dayStr)}
-                className={`aspect-square relative p-1 lg:p-2 rounded-xl lg:rounded-2xl border flex flex-col items-center justify-center transition-all cursor-pointer group active:scale-95 ${
-                  pnl !== 0 
-                  ? (pnl >= 0 ? 'bg-white border-green-500 shadow-sm shadow-green-100' : 'bg-white border-red-500 shadow-sm shadow-red-100') 
-                  : (isWeekend ? 'bg-gray-100/50 border-transparent' : 'bg-white border-gray-100 hover:border-blue-300')
-                }`}
-              >
-                <span className={`text-[10px] lg:text-xs font-black absolute top-1 left-2 ${pnl !== 0 ? 'text-gray-400' : 'text-gray-300'}`}>{day}</span>
-                {pnl !== 0 && <span className={`text-[10px] lg:text-sm font-black ${pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{pnl > 0 ? '+' : ''}{Math.round(pnl)}</span>}
-              </div>
-            );
-          })}
-        </div>
+        {renderGrid()}
+
+        {/* MINI EQUITY CURVE */}
+        {viewMode === 'month' && stats.equityCurve.length > 1 && (
+            <div className="h-24 w-full bg-white rounded-xl border border-gray-100 p-2 shadow-sm">
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={stats.equityCurve}>
+                        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                        <ReferenceLine y={0} stroke="#e5e7eb" />
+                        <Tooltip labelFormatter={(val) => `Tag ${val}`} formatter={(val: number) => val.toFixed(2)} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
+        )}
       </div>
 
       <div className="w-full lg:w-[380px] space-y-6 h-[500px] lg:h-[700px]">

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { Plus, Trash2, Save, FileText, Image as ImageIcon, Upload, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Copy, Loader2 } from 'lucide-react';
 import { AppData, Trade, DayEntry } from '../types';
 import { DBService } from '../services/dbService';
 import { ImportService } from '../services/importService';
@@ -22,8 +22,11 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   });
   const [message, setMessage] = useState('');
   const [screenshotPreviews, setScreenshotPreviews] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const isFirstLoad = useRef(true);
 
   // Load data whenever currentDate or data changes
   useEffect(() => {
@@ -39,6 +42,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
         fees: 0
       });
     }
+    isFirstLoad.current = true; // Reset auto-save blocker
   }, [currentDate, data.trades]);
 
   // Load Screenshot Previews
@@ -57,6 +61,32 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
     }
   }, [entry.screenshots]);
 
+  // AUTO-SAVE LOGIC
+  useEffect(() => {
+      if (isFirstLoad.current) {
+          isFirstLoad.current = false;
+          return;
+      }
+
+      const timer = setTimeout(() => {
+          handleSave(true);
+      }, 2000); // 2 second debounce
+
+      return () => clearTimeout(timer);
+  }, [entry]);
+
+  // KEYBOARD SHORTCUTS
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+              e.preventDefault();
+              handleSave();
+          }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [entry]); // Dependency on entry needed to save current state
+
   const changeDate = (days: number) => {
     const date = new Date(currentDate);
     date.setDate(date.getDate() + days);
@@ -66,7 +96,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   const addTrade = () => {
     setEntry({
       ...entry,
-      trades: [...entry.trades, { pnl: 0, fee: 0, inst: 'ES', qty: 1, start: '', end: '', tag: '' }]
+      trades: [...entry.trades, { pnl: 0, fee: 0, inst: 'ES', qty: 1, start: '', end: '', tag: '', strategy: 'Day-Trade' }]
     });
   };
 
@@ -113,7 +143,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
       if (newIds.length > 0) {
           setScreenshotPreviews(prev => ({ ...prev, ...newPreviews }));
           setEntry(prev => ({ ...prev, screenshots: [...(prev.screenshots || []), ...newIds] }));
-          setMessage('Bild hinzugefügt (Speichern nicht vergessen!)');
+          setMessage('Bild hinzugefügt');
           setTimeout(() => setMessage(''), 2000);
       }
   };
@@ -137,17 +167,74 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
       }
   };
 
-  const handleSave = () => {
+  const handleSave = (silent = false) => {
+    setIsSaving(true);
     const newData = { ...data };
+    
+    // Clean entry before saving (remove invalid trades if any)
+    const cleanEntry = {
+        ...entry,
+        trades: entry.trades.filter(t => t.inst || t.pnl !== 0)
+    };
+
     // Only save if there is content to avoid empty entries in DB
-    if (entry.trades.length > 0 || entry.note.trim() || entry.total !== 0 || (entry.screenshots && entry.screenshots.length > 0)) {
-        newData.trades[currentDate] = entry;
+    if (cleanEntry.trades.length > 0 || cleanEntry.note.trim() || cleanEntry.total !== 0 || (cleanEntry.screenshots && cleanEntry.screenshots.length > 0)) {
+        newData.trades[currentDate] = cleanEntry;
     } else {
-        newData.trades[currentDate] = entry;
+        // If empty, ensure we update it (or could verify if we want to delete key)
+        newData.trades[currentDate] = cleanEntry;
     }
+    
     onUpdate(newData);
-    setMessage('✓ Gespeichert');
-    setTimeout(() => setMessage(''), 2000);
+    setIsSaving(false);
+    
+    if (!silent) {
+        setMessage('✓ Gespeichert');
+        setTimeout(() => setMessage(''), 2000);
+    }
+  };
+
+  const copyPreviousDay = () => {
+      // Find previous day with data
+      const dateKeys = Object.keys(data.trades).sort();
+      const currentIndex = dateKeys.indexOf(currentDate);
+      
+      let prevDate = null;
+      
+      // If current date exists in keys, look before it
+      if (currentIndex > 0) {
+          prevDate = dateKeys[currentIndex - 1];
+      } else {
+          // If current date not in keys, find the last date overall
+          if (dateKeys.length > 0) prevDate = dateKeys[dateKeys.length - 1];
+      }
+
+      if (!prevDate) {
+          alert("Kein vorheriger Tag gefunden.");
+          return;
+      }
+
+      const prevEntry = data.trades[prevDate];
+      if (prevEntry) {
+          // Clone structure but reset PnL
+          const clonedTrades = prevEntry.trades.map(t => ({
+              ...t,
+              pnl: 0,
+              fee: 0,
+              start: '',
+              end: '',
+              qty: 1
+          }));
+          
+          setEntry({
+              ...entry,
+              note: entry.note ? entry.note : prevEntry.note, // Keep existing note if present, else copy
+              trades: [...entry.trades, ...clonedTrades],
+              // Don't copy screenshots or total
+          });
+          setMessage(`Setup kopiert von ${prevDate}`);
+          setTimeout(() => setMessage(''), 2000);
+      }
   };
 
   const handleTradeImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -220,7 +307,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   const grossTotal = (entry.total || 0) + (entry.fees || 0);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6" onPaste={handlePaste}>
+    <div className="max-w-4xl mx-auto space-y-6 pb-24" onPaste={handlePaste}>
       {/* HEADER WITH NAVIGATION */}
       <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
          <div className="flex items-center gap-4">
@@ -238,15 +325,27 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
          
          <div className="flex items-center gap-3">
              <div className="relative">
+                 <button 
+                    onClick={() => {
+                        try {
+                            dateInputRef.current?.showPicker();
+                        } catch(e) {
+                            // Fallback for browsers not supporting showPicker: Focus the input which might open keyboard/picker
+                            dateInputRef.current?.focus();
+                        }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold border border-gray-200 transition-all cursor-pointer"
+                 >
+                    <CalendarIcon size={16} /> Datum
+                 </button>
                  <input 
+                   ref={dateInputRef}
                    type="date" 
                    value={currentDate} 
                    onChange={(e) => setCurrentDate(e.target.value)} 
-                   className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                   className="absolute bottom-0 left-0 w-0 h-0 opacity-0"
+                   tabIndex={-1}
                  />
-                 <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold border border-gray-200 transition-all">
-                    <CalendarIcon size={16} /> Springe zu Datum
-                 </button>
              </div>
              
              {/* Jump to Today Button */}
@@ -299,14 +398,17 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
               </div>
 
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Einzel-Trades</label>
                   <div className="flex gap-2">
-                    <label className="cursor-pointer text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors">
-                        <Upload size={14} /> CSV Import
+                    <button onClick={copyPreviousDay} className="text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 px-2 py-1 rounded-md" title="Setup vom letzten Tag kopieren">
+                        <Copy size={12} /> Copy Prev
+                    </button>
+                    <label className="cursor-pointer text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 px-2 py-1 rounded-md">
+                        <Upload size={12} /> Import
                         <input type="file" className="hidden" accept=".csv" onChange={handleTradeImport} />
                     </label>
-                    <button onClick={addTrade} className="text-blue-600 hover:text-blue-700 text-xs font-bold flex items-center gap-1 transition-colors">
+                    <button onClick={addTrade} className="text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 transition-colors">
                         <Plus size={14} /> Neu
                     </button>
                   </div>
@@ -314,11 +416,12 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
 
                 <div className="space-y-3">
                   <div className="grid grid-cols-12 gap-2 px-2 text-[9px] font-black text-gray-400 uppercase tracking-wider">
-                     <div className="col-span-2">PnL (Gross)</div>
-                     <div className="col-span-2">Fee</div>
+                     <div className="col-span-2">PnL</div>
+                     <div className="col-span-1">Fee</div>
                      <div className="col-span-2">Inst</div>
+                     <div className="col-span-3">Strategy</div>
                      <div className="col-span-3 text-center">Zeit</div>
-                     <div className="col-span-2"></div>
+                     <div className="col-span-1"></div>
                   </div>
                   {entry.trades.map((trade, idx) => (
                     <div key={idx} className="p-3 bg-gray-50 rounded-xl border border-gray-100 grid grid-cols-12 gap-2 items-center animate-in fade-in slide-in-from-top-1">
@@ -328,17 +431,17 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           value={trade.pnl}
                           onChange={(e) => updateTrade(idx, 'pnl', parseFloat(e.target.value))}
                           style={{ colorScheme: 'light' }}
-                          className={`w-full bg-white border border-gray-200 rounded p-2 text-sm font-bold shadow-sm focus:ring-1 focus:ring-blue-100 outline-none ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                          className={`w-full bg-white border border-gray-200 rounded p-1.5 text-sm font-bold shadow-sm focus:ring-1 focus:ring-blue-100 outline-none ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}
                           placeholder="PnL"
                         />
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-1">
                         <input 
                           type="number"
                           value={trade.fee || 0}
                           onChange={(e) => updateTrade(idx, 'fee', parseFloat(e.target.value))}
                           style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-2 text-xs font-medium text-red-400 shadow-sm focus:ring-1 focus:ring-red-100 outline-none"
+                          className="w-full bg-white border border-gray-200 rounded p-1.5 text-xs font-medium text-red-400 shadow-sm focus:ring-1 focus:ring-red-100 outline-none"
                           placeholder="Fee"
                         />
                       </div>
@@ -348,8 +451,23 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           value={trade.inst}
                           onChange={(e) => updateTrade(idx, 'inst', e.target.value)}
                           style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-2 text-xs font-bold uppercase text-blue-600 shadow-sm focus:ring-1 focus:ring-blue-100 outline-none"
+                          className="w-full bg-white border border-gray-200 rounded p-1.5 text-xs font-bold uppercase text-blue-600 shadow-sm focus:ring-1 focus:ring-blue-100 outline-none"
                         />
+                      </div>
+                      <div className="col-span-3">
+                          <select 
+                            value={trade.strategy || 'Day-Trade'}
+                            onChange={(e) => updateTrade(idx, 'strategy', e.target.value)}
+                            className="w-full bg-white border border-gray-200 rounded p-1.5 text-[10px] font-bold shadow-sm outline-none cursor-pointer"
+                          >
+                              <option value="Long-Reversal">L-Rev</option>
+                              <option value="Short-Reversal">S-Rev</option>
+                              <option value="Long-Cont.">L-Cont</option>
+                              <option value="Short-Cont.">S-Cont</option>
+                              <option value="Day-Trade">Day</option>
+                              <option value="Long-Agg.">L-Agg</option>
+                              <option value="Short-Agg.">S-Agg</option>
+                          </select>
                       </div>
                       <div className="col-span-3 flex gap-1">
                         <input 
@@ -367,9 +485,9 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           className="w-full bg-white border border-gray-200 rounded p-1 text-[10px] shadow-sm outline-none" 
                         />
                       </div>
-                      <div className="col-span-3 flex justify-end">
-                        <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500 p-2 transition-colors">
-                          <Trash2 size={16} />
+                      <div className="col-span-1 flex justify-end">
+                        <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500 p-1 transition-colors">
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
@@ -443,10 +561,12 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
 
           <button 
-            onClick={handleSave}
+            onClick={() => handleSave(false)}
+            disabled={isSaving}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all active:scale-95"
           >
-            <Save size={20} /> Speichern
+            {isSaving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />} 
+            Speichern (Ctrl+S)
           </button>
           
           {message && (

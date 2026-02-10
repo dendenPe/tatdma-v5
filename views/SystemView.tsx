@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Package, Download, Archive, RefreshCw, AlertCircle, CheckCircle, FolderOpen, Key, Share2, FileDown, Search, X } from 'lucide-react';
+import { Package, Download, Archive, RefreshCw, AlertCircle, CheckCircle, FolderOpen, Key, Share2, FileDown, Search, X, HardDrive } from 'lucide-react';
 import { AppData, APP_VERSION, DayEntry } from '../types';
 import { VaultService } from '../services/vaultService';
 import { BackupService } from '../services/backupService';
+import { DBService } from '../services/dbService';
 
 interface Props {
   data: AppData;
@@ -18,12 +19,30 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
   // State für den Download Prozess
   const [readyBackup, setReadyBackup] = useState<{blob: Blob, filename: string, url: string} | null>(null);
   const [showIOSOverlay, setShowIOSOverlay] = useState(false);
+  
+  // Data Size State
+  const [storageUsage, setStorageUsage] = useState<{local: string, db: string}>({ local: '...', db: '...' });
 
   useEffect(() => {
+      // Calculate Storage
+      const calcStorage = async () => {
+          // LocalStorage
+          const json = JSON.stringify(data);
+          const bytes = new Blob([json]).size;
+          const mbLocal = (bytes / 1024 / 1024).toFixed(2);
+          
+          // IDB
+          const idbBytes = await DBService.getEstimatedSize();
+          const mbDb = (idbBytes / 1024 / 1024).toFixed(2);
+          
+          setStorageUsage({ local: `${mbLocal} MB`, db: `${mbDb} MB` });
+      };
+      calcStorage();
+
       return () => {
           if (readyBackup?.url) URL.revokeObjectURL(readyBackup.url);
       };
-  }, [readyBackup]);
+  }, [readyBackup, data]);
 
   const handleZipImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
      const file = e.target.files?.[0];
@@ -53,7 +72,7 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
 
     try {
       const blob = await BackupService.createBackupZip(data);
-      const filename = `TaTDMA_Backup_${new Date().toISOString().split('T')[0]}.zip`;
+      const filename = `TaTDMA_v5e_Backup_${new Date().toISOString().split('T')[0]}.zip`;
 
       if (VaultService.isConnected()) {
           await VaultService.writeFile(filename, blob);
@@ -107,8 +126,6 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
 
   const closeOverlay = () => {
       setShowIOSOverlay(false);
-      // Optional: Cleanup backup URL if user closes overlay
-      // setReadyBackup(null); 
   };
 
   const resetApiKey = () => {
@@ -148,13 +165,11 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
                       </div>
 
                       <div className="w-full space-y-3">
-                          {/* CRITICAL: A simple HTML link is the most robust way for iOS Safari to trigger the Download Manager without weird context switches */}
                           <a 
                               href={readyBackup.url}
                               download={readyBackup.filename}
                               className="w-full py-4 bg-blue-600 text-white rounded-xl font-black text-sm uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-200 flex items-center justify-center gap-2 active:scale-95 transition-transform"
                               onClick={() => {
-                                  // Don't close immediately, give user time to see native prompt
                                   setTimeout(() => setMessage({ type: 'success', text: "Download sollte gestartet sein. Prüfe 'Dateien' App." }), 1000);
                               }}
                           >
@@ -173,7 +188,7 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
           </div>
       )}
 
-      {/* DESKTOP / FALLBACK CARD (Wenn Overlay nicht aktiv ist) */}
+      {/* DESKTOP / FALLBACK CARD */}
       {readyBackup && !showIOSOverlay && (
           <div className="bg-[#16325c] rounded-3xl p-6 shadow-xl shadow-blue-900/20 text-white animate-in zoom-in-95 border-2 border-white/10">
               <div className="flex items-center gap-4 mb-6">
@@ -204,33 +219,33 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm space-y-6">
-          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-6">
+          <div className="w-16 h-16 bg-blue-50 dark:bg-gray-700 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center">
             <RefreshCw size={32} />
           </div>
           <div>
-            <h4 className="text-xl font-bold text-gray-700">Speicherort (Vault)</h4>
+            <h4 className="text-xl font-bold text-gray-700 dark:text-white">Speicherort (Vault)</h4>
             <p className="text-sm text-gray-400 mt-2 leading-relaxed">
               Verbinde einen lokalen Ordner (z.B. iCloud Drive), um deine Daten automatisch zu sichern.
               <br/><br/>
-              <span className="text-blue-600 font-bold">Status:</span> Wenn verbunden, wird bei jeder Änderung automatisch eine <code>tatdma_autosave.json</code> im Ordner aktualisiert.
+              <span className="text-blue-600 dark:text-blue-400 font-bold">Status:</span> Wenn verbunden, wird bei jeder Änderung automatisch eine <code>tatdma_autosave.json</code> im Ordner aktualisiert.
             </p>
           </div>
           <button 
             onClick={() => VaultService.connect()}
-            className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2"
+            className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 dark:shadow-none flex items-center justify-center gap-2"
           >
             <FolderOpen size={18} />
             {VaultService.isConnected() ? 'Verbindung erneuern' : 'Ordner Verbinden'}
           </button>
         </div>
 
-        <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm space-y-6">
-          <div className="w-16 h-16 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center">
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm space-y-6">
+          <div className="w-16 h-16 bg-purple-50 dark:bg-gray-700 text-purple-600 dark:text-purple-400 rounded-2xl flex items-center justify-center">
             <Archive size={32} />
           </div>
           <div>
-            <h4 className="text-xl font-bold text-gray-700">Manuelles Backup</h4>
+            <h4 className="text-xl font-bold text-gray-700 dark:text-white">Manuelles Backup</h4>
             <p className="text-sm text-gray-400 mt-2 leading-relaxed">
               Erstelle ein vollständiges ZIP-Backup inklusive aller Bilder und PDF-Belege.
               <br/><br/>
@@ -238,7 +253,7 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-             <label className={`bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-4 rounded-xl text-center text-xs flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+             <label className={`bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-white font-bold py-4 rounded-xl text-center text-xs flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
                <Package size={18} /> 
                {isImporting ? 'Importiere...' : 'ZIP Import'}
                <input type="file" className="hidden" accept=".zip" onChange={handleZipImport} disabled={isImporting} />
@@ -246,7 +261,7 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
              <button 
                onClick={handleExportAll} 
                disabled={isExporting}
-               className={`bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-4 rounded-xl text-center text-xs flex flex-col items-center justify-center gap-2 transition-all ${isExporting ? 'opacity-50 cursor-wait' : ''}`}
+               className={`bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-white font-bold py-4 rounded-xl text-center text-xs flex flex-col items-center justify-center gap-2 transition-all ${isExporting ? 'opacity-50 cursor-wait' : ''}`}
              >
                <Download size={18} /> 
                {isExporting ? 'Erstelle...' : 'ZIP Erstellen'}
@@ -255,23 +270,33 @@ const SystemView: React.FC<Props> = ({ data, onUpdate }) => {
         </div>
       </div>
 
-      <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">
+      <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm flex items-center justify-between">
           <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-yellow-50 text-yellow-600 rounded-2xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400 rounded-2xl flex items-center justify-center">
                   <Key size={24} />
               </div>
               <div>
-                  <h4 className="text-lg font-bold text-gray-700">AI Konfiguration</h4>
+                  <h4 className="text-lg font-bold text-gray-700 dark:text-white">AI Konfiguration</h4>
                   <p className="text-xs text-gray-400">Gemini API Key verwalten.</p>
               </div>
           </div>
-          <button onClick={resetApiKey} className="px-6 py-3 bg-gray-50 text-gray-600 rounded-xl text-xs font-bold hover:bg-red-50 hover:text-red-500 transition-colors">
+          <button onClick={resetApiKey} className="px-6 py-3 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-white rounded-xl text-xs font-bold hover:bg-red-50 hover:text-red-500 transition-colors">
               Key Löschen / Ändern
           </button>
       </div>
 
       <div className="bg-gray-900 rounded-2xl p-8 text-white">
-        <h5 className="text-xs uppercase font-bold text-gray-500 tracking-[0.2em] mb-4">Daten Statistik</h5>
+        <div className="flex justify-between items-start mb-6">
+            <h5 className="text-xs uppercase font-bold text-gray-500 tracking-[0.2em]">Daten Statistik</h5>
+            <div className="text-right">
+                <div className="flex items-center justify-end gap-2 text-gray-400 text-xs font-mono">
+                    <HardDrive size={12} /> Speicher
+                </div>
+                <div className="text-[10px] text-gray-500 mt-1">
+                    JSON: <span className="text-white font-bold">{storageUsage.local}</span> • Medien: <span className="text-white font-bold">{storageUsage.db}</span>
+                </div>
+            </div>
+        </div>
         <div className="grid grid-cols-3 gap-8">
            <div>
              <span className="block text-2xl font-bold">{Object.keys(data.trades).length}</span>

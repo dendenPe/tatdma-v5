@@ -156,6 +156,54 @@ export class GeminiService {
       }
   }
 
+  // --- AI ASSISTANT CHAT ---
+  static async chatWithData(history: {role: 'user'|'model', text: string}[], contextData: any, userMessage: string): Promise<string> {
+      try {
+          const apiKey = this.getApiKey();
+          if (!apiKey) throw new Error("API Key fehlt.");
+
+          const ai = new GoogleGenAI({ apiKey });
+          
+          // Construct System Instruction
+          const systemInstruction = `
+          You are 'TaTDMA Assistant', a helpful financial AI for a personal finance app.
+          
+          Here is a summary of the user's current data (JSON):
+          ${JSON.stringify(contextData, null, 2)}
+          
+          Your goal is to answer questions based STRICTLY on this data.
+          - If the user asks about spending, look at 'expenses'.
+          - If trading, look at 'trading'.
+          - If net worth, look at 'netWorth'.
+          - Be concise, friendly, and use bolding for numbers.
+          - All currency is CHF unless specified.
+          - If data is missing for a specific question, say so politely.
+          `;
+
+          const contents = history.map(h => ({
+              role: h.role,
+              parts: [{ text: h.text }]
+          }));
+          
+          contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
+          const response = await this.generateWithRetry(ai.models, {
+              model: 'gemini-3-flash-preview',
+              contents: contents,
+              config: {
+                  systemInstruction: systemInstruction,
+                  temperature: 0.7
+              }
+          });
+
+          return response.text || "Keine Antwort generiert.";
+
+      } catch (e: any) {
+          console.error("Chat Error", e);
+          return "Entschuldigung, ich konnte die Anfrage nicht verarbeiten. (API Fehler)";
+      }
+  }
+
   // Legacy method for single receipt scan in TaxView (updated to use vision logic)
   static async analyzeReceipt(file: File): Promise<ScannedReceipt | null> {
     try {

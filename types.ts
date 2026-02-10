@@ -1,6 +1,6 @@
 
 // GLOBAL CONSTANTS
-export const APP_VERSION = 'v5.0e';
+export const APP_VERSION = 'v5e';
 
 export interface Trade {
   pnl: number;
@@ -254,6 +254,16 @@ export interface RecurringExpense {
     history: PriceHistory[]; // Array of price changes
 }
 
+// --- NEW IN v5.1: BUDGETS & GOALS ---
+export interface SavingsGoal {
+    id: string;
+    name: string; // e.g. "Notgroschen", "Ferien"
+    targetAmount: number;
+    currentAmount: number; // Manually updated or linked? For now manual.
+    deadline: string; // YYYY-MM-DD
+    color: string; // hex
+}
+
 export interface AppData {
   trades: Record<string, DayEntry>;
   salary: Record<string, Record<string, SalaryEntry>>; // year -> month -> entry
@@ -285,4 +295,8 @@ export interface AppData {
   // New in v5b
   dailyExpenses: Record<string, ExpenseEntry[]>; // Key = Year (2025), Value = List of expenses
   recurringExpenses?: RecurringExpense[]; // New in v5c: List of all recurring items
+  
+  // New in v5.1
+  budgets?: Record<string, number>; // Key = Category (e.g. 'Verpflegung'), Value = Monthly Limit in CHF
+  savingsGoals?: SavingsGoal[];
 }
