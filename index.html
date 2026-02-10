@@ -24,9 +24,35 @@
                             900: '#111827',
                             950: '#030712',
                         }
+                    },
+                    typography: {
+                        DEFAULT: {
+                            css: {
+                                maxWidth: 'none', 
+                            }
+                        }
                     }
                 }
-            }
+            },
+            plugins: [
+                function({ addUtilities }) {
+                    addUtilities({
+                        // Editor specific
+                        '.ProseMirror': { outline: 'none' },
+                        
+                        // Shared content styling (Editor + Read View)
+                        '.tiptap-content table': { borderCollapse: 'collapse', width: '100%', margin: '1em 0', tableLayout: 'fixed' },
+                        '.tiptap-content td, .tiptap-content th': { border: '1px solid #d1d5db', padding: '8px', verticalAlign: 'top', position: 'relative' },
+                        '.tiptap-content th': { backgroundColor: '#f9fafb', fontWeight: 'bold', textAlign: 'left' },
+                        '.tiptap-content img': { borderRadius: '0.5rem', maxWidth: '100%', height: 'auto', display: 'block', margin: '10px 0' },
+                        '.tiptap-content ul': { listStyleType: 'disc', paddingLeft: '1.5em', margin: '1em 0' },
+                        '.tiptap-content ol': { listStyleType: 'decimal', paddingLeft: '1.5em', margin: '1em 0' },
+                        '.tiptap-content blockquote': { borderLeft: '4px solid #e5e7eb', paddingLeft: '1rem', fontStyle: 'italic', margin: '1em 0' },
+                        '.tiptap-content a': { color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' },
+                        '.tiptap-content p': { margin: '0.5em 0' }
+                    })
+                }
+            ]
         }
     </script>
     <style>
@@ -79,26 +105,36 @@
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "jspdf": "https://esm.sh/jspdf@^4.1.0",
-    "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.7",
+    "react": "https://esm.sh/react@^18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
+    "react/": "https://esm.sh/react@^18.2.0/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.344.0",
+    "recharts": "https://esm.sh/recharts@^2.12.0",
+    "jspdf": "https://esm.sh/jspdf@^2.5.1",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@^3.8.2",
     "jszip": "https://esm.sh/jszip@^3.10.1",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
-    "pdfjs-dist": "https://esm.sh/pdfjs-dist@^5.4.624",
-    "tesseract.js": "https://esm.sh/tesseract.js@^7.0.0",
-    "mammoth": "https://esm.sh/mammoth@^1.11.0",
+    "vite": "https://esm.sh/vite@^5.1.4",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^4.2.1",
+    "pdfjs-dist": "https://esm.sh/pdfjs-dist@4.0.379",
+    "tesseract.js": "https://esm.sh/tesseract.js@^5.0.5",
+    "mammoth": "https://esm.sh/mammoth@^1.6.0",
     "xlsx": "https://esm.sh/xlsx@^0.18.5",
     "heic2any": "https://esm.sh/heic2any@^0.0.4",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
+    "@google/genai": "https://esm.sh/@google/genai@^0.1.1",
+    "@tiptap/react": "https://esm.sh/@tiptap/react@2.2.4?deps=react@18.2.0,react-dom@18.2.0,@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/pm": "https://esm.sh/@tiptap/pm@2.2.4",
+    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@2.2.4?deps=@tiptap/core@2.2.4",
+    "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4",
+    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@2.2.4?deps=@tiptap/core@2.2.4,@tiptap/pm@2.2.4"
   }
 }
 </script>
-  <script type="module" crossorigin src="/tatdma-v5/assets/index-C7WRJkTS.js"></script>
+  <script type="module" crossorigin src="/tatdma-v5/assets/index-CvVjEdJ0.js"></script>
 </head>
 <body class="bg-gray-50 dark:bg-gray-900 antialiased text-gray-900 dark:text-gray-100">
     <div id="root"></div>
