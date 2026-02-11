@@ -11,37 +11,40 @@ import {
   PenTool,
   Loader2,
   Eye,
+  Info,
   Database,
   ScanLine,
+  Check,
   X,
-  FileSpreadsheet, 
-  FileType, 
-  Image as ImageIcon, 
-  Bold, 
-  Italic, 
-  Underline as UnderlineIcon, 
-  List, 
-  Undo, 
-  Redo, 
-  ImagePlus, 
-  ArrowLeft, 
-  UploadCloud, 
-  FileArchive, 
-  Receipt, 
-  Sparkles, 
-  Download, 
-  File as FileIcon, 
-  ZoomIn, 
-  Table as TableIcon, 
-  Palette, 
-  ArrowUp, 
-  ArrowDown, 
-  ArrowLeft as ArrowLeftIcon, 
-  ArrowRight as ArrowRightIcon, 
-  Layout, 
-  ChevronDown, 
-  ChevronRight, 
-  BrainCircuit, 
+  Settings,
+  FileSpreadsheet,
+  FileType,
+  Image as ImageIcon,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  Undo,
+  Redo,
+  ImagePlus,
+  ArrowLeft,
+  UploadCloud,
+  FileArchive,
+  Receipt,
+  Sparkles,
+  Download,
+  File as FileIcon,
+  ZoomIn,
+  Table as TableIcon,
+  Palette,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft as ArrowLeftIcon,
+  ArrowRight as ArrowRightIcon,
+  Layout,
+  ChevronDown,
+  ChevronRight,
+  BrainCircuit,
   StickyNote,
   Share2,
   Maximize2,
@@ -66,7 +69,7 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { Image } from '@tiptap/extension-image';
 import { Link } from '@tiptap/extension-link';
-import { Underline } from '@tiptap/extension-underline';
+import { Underline as TiptapUnderline } from '@tiptap/extension-underline';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import { TextAlign } from '@tiptap/extension-text-align';
@@ -245,7 +248,7 @@ const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale
     );
 };
 
-const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQuery: string, isLensEnabled: boolean }) => {
+const PdfViewer = ({ blob, searchQuery, isLensEnabled, isFullHeight }: { blob: Blob, searchQuery: string, isLensEnabled: boolean, isFullHeight?: boolean }) => {
     const [pdf, setPdf] = useState<any>(null);
     const [pages, setPages] = useState<any[]>([]);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -260,6 +263,7 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
                 const loadedPdf = await loadingTask.promise;
                 setPdf(loadedPdf);
                 const loadedPages = [];
+                // Load first 5 pages for performance
                 for (let i = 1; i <= Math.min(loadedPdf.numPages, 5); i++) loadedPages.push(await loadedPdf.getPage(i));
                 setPages(loadedPages);
             } catch (e) { console.error("PDF Load Error", e); }
@@ -287,8 +291,9 @@ const PdfViewer = ({ blob, searchQuery, isLensEnabled }: { blob: Blob, searchQue
     if (!pdf) return <div className="flex items-center justify-center h-48"><Loader2 className="animate-spin text-blue-500" /></div>;
 
     return (
-        <div ref={containerRef} className="w-full bg-gray-100 rounded-lg p-2 overflow-y-auto max-h-[calc(100vh-250px)] text-center">
+        <div ref={containerRef} className={`w-full bg-gray-100 rounded-lg p-2 overflow-y-auto text-center ${isFullHeight ? 'h-full' : 'max-h-[calc(100vh-250px)]'}`}>
             {pages.map((page, idx) => (<PdfPage key={idx} page={page} scale={scale} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />))}
+            {pdf.numPages > 5 && <div className="text-gray-400 text-xs py-2">... {pdf.numPages - 5} weitere Seiten (Download zum Ansehen)</div>}
         </div>
     );
 };
@@ -456,7 +461,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       Link.configure({
         openOnClick: true,
       }),
-      Underline
+      TiptapUnderline
     ],
     content: '<p></p>',
     onUpdate: ({ editor }) => {
@@ -550,11 +555,35 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       }
   };
 
-  const handleShare = async () => {
+  const handleNativeShare = async () => {
       if (!activeFileBlob || !selectedNote) return;
-      const fileName = selectedNote.fileName || `doc_${selectedNote.id}.pdf`;
-      const url = URL.createObjectURL(activeFileBlob);
-      setShareModalData({ url, filename: fileName });
+      
+      try {
+          // 1. Convert Blob to File
+          const fileName = selectedNote.fileName || `doc_${selectedNote.id}.pdf`;
+          const mimeType = activeFileBlob.type || 'application/pdf';
+          const file = new File([activeFileBlob], fileName, { type: mimeType });
+
+          // 2. Check and Share using Navigator API
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+              await navigator.share({
+                  files: [file],
+                  title: selectedNote.title || 'Dokument',
+                  text: selectedNote.title
+              });
+          } else {
+              // Fallback for desktop browsers
+              const url = URL.createObjectURL(activeFileBlob);
+              setShareModalData({ url, filename: fileName });
+          }
+      } catch (e: any) {
+          if (e.name !== 'AbortError') {
+              console.error("Share failed", e);
+              // Fallback
+              const url = URL.createObjectURL(activeFileBlob);
+              setShareModalData({ url, filename: selectedNote.fileName || 'doc.pdf' });
+          }
+      }
   };
 
   const closeShareModal = () => {
@@ -915,7 +944,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                     {/* FORMATTING TOOLBAR */}
                     <button onClick={() => editor?.chain().focus().toggleBold().run()} className={`p-1.5 rounded ${editor?.isActive('bold') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Bold size={14}/></button>
                     <button onClick={() => editor?.chain().focus().toggleItalic().run()} className={`p-1.5 rounded ${editor?.isActive('italic') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Italic size={14}/></button>
-                    <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><UnderlineIcon size={14}/></button>
+                    <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Underline size={14}/></button>
                     
                     <div className="w-px h-4 bg-gray-300 mx-1"></div>
                     
@@ -998,7 +1027,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                     {(selectedNote.type === 'pdf' || selectedNote.type === 'image') && activeFileBlob && (
                                         <button onClick={() => setIsMaximized(true)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors hidden md:block shrink-0"><Maximize2 size={16} /></button>
                                     )}
-                                    {activeFileBlob && <button onClick={handleShare} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0"><Share2 size={16} /></button>}
+                                    {activeFileBlob && <button onClick={handleNativeShare} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0"><Share2 size={16} /></button>}
                                     {selectedNote.filePath && <button onClick={openFile} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors shrink-0"><Eye size={16} /></button>}
                                     <button onClick={toggleTaxImport} disabled={isAnalyzingTax} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 shrink-0 ${selectedNote.taxRelevant ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`}>{isAnalyzingTax ? <Loader2 size={16} className="animate-spin text-blue-500" /> : <Receipt size={16} />}</button>
                                     <button onClick={() => setIsEditMode(true)} className="p-1.5 bg-[#16325c] text-white rounded-lg hover:bg-blue-800 flex items-center gap-2 text-xs font-bold shadow-sm transition-all shrink-0"><Edit3 size={14}/> <span className="hidden sm:inline">Edit</span></button>
@@ -1095,7 +1124,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
               </div>
               <div className="flex-1 overflow-auto bg-gray-100 p-4 flex justify-center">
                   <div className="w-full max-w-5xl bg-white shadow-2xl min-h-full">
-                      {activeFileBlob.type === 'application/pdf' ? <PdfViewer blob={activeFileBlob} searchQuery="" isLensEnabled={false} /> : <img src={URL.createObjectURL(activeFileBlob)} className="max-w-full h-auto mx-auto" />}
+                      {activeFileBlob.type === 'application/pdf' ? (
+                          <PdfViewer blob={activeFileBlob} searchQuery="" isLensEnabled={false} isFullHeight={true} />
+                      ) : (
+                          <img src={URL.createObjectURL(activeFileBlob)} className="max-w-full h-auto mx-auto" />
+                      )}
                   </div>
               </div>
           </div>
