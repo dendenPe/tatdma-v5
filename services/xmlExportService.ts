@@ -82,6 +82,23 @@ export class XmlExportService {
     const lohnNetto = cert?.grossSimple || (lohnBrutto - manualSalary.reduce((s,e) => s + (e.ahv||0)+(e.alv||0)+(e.bvg||0), 0)); 
     const spesen = cert?.expenses || manualSalary.reduce((s, e) => s + (e.pauschalspesen || 0), 0);
 
+    // Calculate Bank Totals
+    const balances = data.tax.balances[year];
+    let bankTotalCHF = 0;
+    if (balances) {
+        bankTotalCHF += (balances.ubs || 0);
+        bankTotalCHF += (balances.comdirect || 0);
+        if (balances.customAccounts) {
+            balances.customAccounts.forEach(acc => {
+                let val = acc.amount;
+                // Simple conversion estimate for XML if rate not provided, ideally passed in
+                if (acc.currency === 'USD') val = val * (data.tax.rateUSD || 0.85);
+                else if (acc.currency === 'EUR') val = val * (data.tax.rateEUR || 0.94);
+                bankTotalCHF += val;
+            });
+        }
+    }
+
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <eTaxData xmlns="http://www.ech.ch/xmlns/eCH-0196/2" version="4.0">
     <Header>
@@ -150,11 +167,10 @@ export class XmlExportService {
     <!-- VERMÖGEN (Formular Wertschriften / Ziff 400) -->
     <Assets>
         <BankAccounts>
-            ${data.tax.balances[year] ? `
             <Position id="30.1">
-                <Description>Bankguthaben (UBS, etc.)</Description>
-                <Value3112 currency="CHF">${((data.tax.balances[year].ubs || 0) + (data.tax.balances[year].comdirect || 0)).toFixed(2)}</Value3112>
-            </Position>` : ''}
+                <Description>Bankguthaben Total (UBS, Comdirect, Weitere)</Description>
+                <Value3112 currency="CHF">${bankTotalCHF.toFixed(2)}</Value3112>
+            </Position>
         </BankAccounts>
         
         <Securities>

@@ -155,7 +155,7 @@ export class PdfGenService {
         const bankRows = [];
         let totalBank = 0;
         
-        // Manual Entries
+        // Standard Manual Entries
         if (balances.ubs) { bankRows.push(['UBS Switzerland AG', fmtNum(balances.ubs, 'CHF')]); totalBank += balances.ubs; }
         if (balances.comdirectEUR) { 
           const val = balances.comdirectEUR * rateEUR;
@@ -165,10 +165,21 @@ export class PdfGenService {
           bankRows.push(['Comdirect Bank', fmtNum(balances.comdirect, 'CHF')]); totalBank += balances.comdirect;
         }
 
+        // Custom Dynamic Accounts
+        if (balances.customAccounts) {
+            balances.customAccounts.forEach(acc => {
+                let valCHF = acc.amount;
+                if (acc.currency === 'USD') valCHF = acc.amount * rateUSD;
+                else if (acc.currency === 'EUR') valCHF = acc.amount * rateEUR;
+                
+                bankRows.push([`${acc.name} (${acc.currency} ${fmtNum(acc.amount, '')})`, fmtNum(valCHF, 'CHF')]);
+                totalBank += valCHF;
+            });
+        }
+
         // Automatic IBKR Cash from Portfolio Data
         if (yearPortfolio && yearPortfolio.cash) {
              let ibkrCashTotalCHF = 0;
-             let details: string[] = [];
              
              // Get rates from the portfolio snapshot to ensure consistency
              const pRates = yearPortfolio.exchangeRates || {};
@@ -189,7 +200,6 @@ export class PdfGenService {
                     
                     const valInCHF = valInUSD * usdChfRate;
                     ibkrCashTotalCHF += valInCHF;
-                    details.push(`${fmtNum(amt, curr)}`);
                 }
              }
 

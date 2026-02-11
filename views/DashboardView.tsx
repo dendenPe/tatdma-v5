@@ -39,8 +39,19 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
   // 1. Calculate Net Worth
   const portValue = portYearData?.summary?.totalValue || 0;
   
+  // Bank Balances Calculation
   const balances = data.tax.balances[currentYear] || { ubs: 0, comdirect: 0, ibkr: 0 };
-  const bankTotal = (balances.ubs || 0) + (balances.comdirect || 0) + ((balances.comdirectEUR || 0) * (data.tax.rateEUR || 0.94));
+  let bankTotal = (balances.ubs || 0) + (balances.comdirect || 0) + ((balances.comdirectEUR || 0) * (data.tax.rateEUR || 0.94));
+  
+  // Add Custom Accounts
+  if (balances.customAccounts) {
+      balances.customAccounts.forEach(acc => {
+          let val = acc.amount;
+          if (acc.currency === 'USD') val = acc.amount * (data.tax.rateUSD || 0.85);
+          else if (acc.currency === 'EUR') val = acc.amount * (data.tax.rateEUR || 0.94);
+          bankTotal += val;
+      });
+  }
   
   const rates = portYearData?.exchangeRates || {};
   const usdToChf = rates['USD_CHF'] || 0.88;
@@ -60,7 +71,7 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
 
   const securitiesCHF = (portValue * usdToChf);
   
-  const totalNetWorth = bankTotal + securitiesCHF;
+  // Real Total Assets (Securities + IBKR Cash + External Banks)
   const realTotalAssets = securitiesCHF + cashTotalCHF + bankTotal;
 
   // 2. Income Calculation
@@ -137,7 +148,7 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
   const allocationData = [
       { name: 'Aktien/Fonds', value: Math.round(securitiesCHF), color: '#3b82f6' },
       { name: 'Cash (IBKR)', value: Math.round(cashTotalCHF), color: '#8b5cf6' },
-      { name: 'Banken', value: Math.round(bankTotal), color: '#10b981' },
+      { name: 'Banken (Privat)', value: Math.round(bankTotal), color: '#10b981' },
   ].filter(d => d.value > 0);
 
   // Chart Data: Monthly Income

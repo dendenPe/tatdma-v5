@@ -155,6 +155,15 @@ export interface TaxExpense {
   alimonyDetails?: AlimonyDetails;
 }
 
+// NEW: Custom Bank Account Interface
+export interface CustomBankAccount {
+  id: string;
+  name: string;
+  amount: number;
+  currency: string; // 'CHF', 'EUR', 'USD'
+  iban?: string;
+}
+
 export interface BankBalance {
   ubs: number;
   ubsPdfFilename?: string;
@@ -165,6 +174,8 @@ export interface BankBalance {
   ibkr: number;
   ibkrPortfolioId?: string;
   ibkrPdfFilename?: string;
+  // NEW: Dynamic List of Accounts
+  customAccounts?: CustomBankAccount[];
 }
 
 // --- NEW DOC MANAGEMENT TYPES ---
