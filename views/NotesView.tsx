@@ -372,7 +372,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   
   // Table Modal State
   const [tableModal, setTableModal] = useState<{open: boolean, rows: number, cols: number}>({ open: false, rows: 3, cols: 3 });
-  const [activeTableCtx, setActiveTableCtx] = useState<{ table: HTMLTableElement, rowIndex: number, colIndex: number } | null>(null);
   
   // NEW: Search & Replace State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -959,8 +958,13 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   };
 
   const confirmInsertTable = () => {
-      if (!editor) return;
-      editor.chain().focus().insertTable({ rows: tableModal.rows, cols: tableModal.cols, withHeaderRow: true }).run();
+      if (editor) {
+          editor.chain().focus().insertTable({ 
+              rows: tableModal.rows, 
+              cols: tableModal.cols, 
+              withHeaderRow: true 
+          }).run();
+      }
       setTableModal({ ...tableModal, open: false });
   };
 
@@ -1339,7 +1343,29 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           </div>
       )}
 
-      {/* NEW: FLOATING TOOLTIP RENDERER (FIXED & COMPACT) */}
+      {/* TABLE MODAL */}
+      {tableModal.open && (
+          <div className="absolute inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4 animate-in zoom-in-95">
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                      <h3 className="font-bold text-gray-800 flex items-center gap-2"><TableIcon size={18} className="text-blue-500"/> Tabelle erstellen</h3>
+                      <button onClick={() => setTableModal({...tableModal, open: false})} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-gray-400">Zeilen</label>
+                          <input type="number" min="1" max="50" value={tableModal.rows} onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
+                      </div>
+                      <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold text-gray-400">Spalten</label>
+                          <input type="number" min="1" max="20" value={tableModal.cols} onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
+                      </div>
+                  </div>
+                  <button onClick={confirmInsertTable} className="w-full bg-[#16325c] text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-800 transition-colors">Einfügen</button>
+              </div>
+          </div>
+      )}
+
       {tooltip && (
           <div 
               className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10"
@@ -1347,7 +1373,6 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           >
               <div className="font-bold mb-1 border-b border-white/10 pb-1 text-blue-300 uppercase tracking-wider">{tooltip.title}</div>
               <div className="text-gray-300 font-medium">{tooltip.content}</div>
-              {/* Triangle pointing left */}
               <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-r-[6px] border-r-black/90 border-b-[5px] border-b-transparent"></div>
           </div>
       )}
