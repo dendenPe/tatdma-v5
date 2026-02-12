@@ -52,7 +52,12 @@
                         '.tiptap-content p': { margin: '0.5em 0' },
                         '.tiptap-content h1': { fontSize: '1.5em', fontWeight: 'bold', margin: '0.5em 0' },
                         '.tiptap-content h2': { fontSize: '1.25em', fontWeight: 'bold', margin: '0.5em 0' },
-                        '.tiptap-content h3': { fontSize: '1.1em', fontWeight: 'bold', margin: '0.5em 0' }
+                        '.tiptap-content h3': { fontSize: '1.1em', fontWeight: 'bold', margin: '0.5em 0' },
+                        '.tiptap-content ul[data-type="taskList"]': { listStyle: 'none', padding: 0 },
+                        '.tiptap-content ul[data-type="taskList"] li': { display: 'flex', alignItems: 'center' },
+                        '.tiptap-content ul[data-type="taskList"] li > label': { marginRight: '0.5rem', userSelect: 'none' },
+                        '.tiptap-content ul[data-type="taskList"] li > div': { flex: '1 1 auto' },
+                        '.tiptap-content mark': { backgroundColor: '#fef08a', padding: '0.1rem 0.2rem', borderRadius: '0.2rem' }
                     })
                 }
             ]
@@ -111,16 +116,25 @@
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
     "react/": "https://esm.sh/react@^19.2.4/",
     "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "@tiptap/react": "https://esm.sh/@tiptap/react@^3.19.0",
-    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@^3.19.0",
-    "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@^3.19.0",
-    "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@^3.19.0",
-    "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@^3.19.0",
-    "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@^3.19.0",
-    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@^3.19.0",
-    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@^3.19.0",
-    "@tiptap/extension-text-style": "https://esm.sh/@tiptap/extension-text-style@^3.19.0",
-    "@tiptap/extension-color": "https://esm.sh/@tiptap/extension-color@^3.19.0",
+    "@tiptap/react": "https://esm.sh/@tiptap/react@^2.10.3",
+    "@tiptap/core": "https://esm.sh/@tiptap/core@^2.10.3",
+    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@^2.10.3",
+    "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@^2.10.3",
+    "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@^2.10.3",
+    "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@^2.10.3",
+    "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@^2.10.3",
+    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@^2.10.3",
+    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@^2.10.3",
+    "@tiptap/extension-text-style": "https://esm.sh/@tiptap/extension-text-style@^2.10.3",
+    "@tiptap/extension-color": "https://esm.sh/@tiptap/extension-color@^2.10.3",
+    "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@^2.10.3",
+    "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@^2.10.3",
+    "@tiptap/extension-font-family": "https://esm.sh/@tiptap/extension-font-family@^2.10.3",
+    "@tiptap/extension-highlight": "https://esm.sh/@tiptap/extension-highlight@^2.10.3",
+    "@tiptap/extension-task-item": "https://esm.sh/@tiptap/extension-task-item@^2.10.3",
+    "@tiptap/extension-task-list": "https://esm.sh/@tiptap/extension-task-list@^2.10.3",
+    "@tiptap/extension-subscript": "https://esm.sh/@tiptap/extension-subscript@^2.10.3",
+    "@tiptap/extension-superscript": "https://esm.sh/@tiptap/extension-superscript@^2.10.3",
     "xlsx": "https://esm.sh/xlsx@^0.18.5",
     "mammoth": "https://esm.sh/mammoth@^1.11.0",
     "@google/genai": "https://esm.sh/@google/genai@^1.40.0",
@@ -131,10 +145,8 @@
     "jspdf-autotable": "https://esm.sh/jspdf-autotable@^5.0.7",
     "jspdf": "https://esm.sh/jspdf@^4.1.0",
     "pdfjs-dist": "https://esm.sh/pdfjs-dist@^5.4.624",
-    "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@^3.19.0",
     "tesseract.js": "https://esm.sh/tesseract.js@^7.0.0",
-    "heic2any": "https://esm.sh/heic2any@^0.0.4",
-    "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@^3.19.0"
+    "heic2any": "https://esm.sh/heic2any@^0.0.4"
   }
 }
 </script>

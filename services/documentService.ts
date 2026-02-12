@@ -15,7 +15,7 @@ import { GeminiService } from './geminiService';
 
 // Set Worker manually for vite/browser environment
 // @ts-ignore
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@5.4.624/build/pdf.worker.min.mjs';
 
 export class DocumentService {
 

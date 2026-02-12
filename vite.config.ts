@@ -38,7 +38,13 @@ export default defineConfig(({ command, mode }) => {
         '@tiptap/extension-underline',
         '@tiptap/extension-text-style',
         '@tiptap/extension-color',
-        '@tiptap/extension-text-align'
+        '@tiptap/extension-text-align',
+        '@tiptap/extension-font-family',
+        '@tiptap/extension-highlight',
+        '@tiptap/extension-task-item',
+        '@tiptap/extension-task-list',
+        '@tiptap/extension-subscript',
+        '@tiptap/extension-superscript'
       ],
       esbuildOptions: {
         // Dies behebt den Fehler im Development Modus

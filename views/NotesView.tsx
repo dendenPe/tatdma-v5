@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Search, 
@@ -57,11 +56,21 @@ import {
   Heading1,
   Heading2,
   Heading3,
-  Type
+  Type,
+  CheckSquare,
+  Highlighter,
+  Subscript as SubIcon,
+  Superscript as SupIcon,
+  Columns,
+  Rows,
+  Trash,
+  Combine,
+  Split,
+  Search as SearchIcon
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // TIPTAP IMPORTS
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, Extension } from '@tiptap/react';
 import { StarterKit } from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
@@ -73,6 +82,12 @@ import { Underline as TiptapUnderline } from '@tiptap/extension-underline';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
 import { TextAlign } from '@tiptap/extension-text-align';
+import { FontFamily } from '@tiptap/extension-font-family';
+import { Highlight } from '@tiptap/extension-highlight';
+import { TaskItem } from '@tiptap/extension-task-item';
+import { TaskList } from '@tiptap/extension-task-list';
+import { Subscript } from '@tiptap/extension-subscript';
+import { Superscript } from '@tiptap/extension-superscript';
 
 import { AppData, NoteDocument, DocCategory, CATEGORY_STRUCTURE, TaxExpense } from '../types';
 import { DocumentService } from '../services/documentService';
@@ -80,11 +95,11 @@ import { VaultService } from '../services/vaultService';
 import { DBService } from '../services/dbService';
 import { GeminiService } from '../services/geminiService';
 
-// Ensure worker is set
+// Ensure worker is set to specific version matching package.json
 // @ts-ignore
 if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
     // @ts-ignore
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@5.4.624/build/pdf.worker.min.mjs';
 }
 
 interface Props {
@@ -106,6 +121,37 @@ const OLD_TO_NEW_MAP: Record<string, string> = {
     'Fahrzeug': 'Fahrzeuge & Mobilität',
     'Verträge': 'Recht & Verträge'
 };
+
+// --- CUSTOM FONT SIZE EXTENSION ---
+const FontSize = Extension.create({
+  name: 'fontSize',
+  addOptions() { return { types: ['textStyle'] } },
+  addGlobalAttributes() {
+    return [{
+      types: this.options.types,
+      attributes: {
+        fontSize: {
+          default: null,
+          parseHTML: element => element.style.fontSize.replace(/['"]+/g, ''),
+          renderHTML: attributes => {
+            if (!attributes.fontSize) return {};
+            return { style: `font-size: ${attributes.fontSize}` };
+          },
+        },
+      },
+    }]
+  },
+  addCommands() {
+    return {
+      setFontSize: (fontSize: string) => ({ chain }: any) => {
+        return chain().setMark('textStyle', { fontSize }).run();
+      },
+      unsetFontSize: () => ({ chain }: any) => {
+        return chain().setMark('textStyle', { fontSize: null }).run();
+      },
+    }
+  },
+});
 
 const stripHtml = (html: string) => {
    const tmp = document.createElement("DIV");
@@ -324,6 +370,14 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [tooltip, setTooltip] = useState<{x: number, y: number, title: string, content: string} | null>(null);
   const [shareModalData, setShareModalData] = useState<{url: string, filename: string} | null>(null);
   
+  // Table Modal State
+  const [tableModal, setTableModal] = useState<{open: boolean, rows: number, cols: number}>({ open: false, rows: 3, cols: 3 });
+  const [activeTableCtx, setActiveTableCtx] = useState<{ table: HTMLTableElement, rowIndex: number, colIndex: number } | null>(null);
+  
+  // NEW: Search & Replace State
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [editorSearchQuery, setEditorSearchQuery] = useState('');
+  
   // NEW: Buffered User Note Input for Debouncing
   const [userNoteInput, setUserNoteInput] = useState('');
 
@@ -486,7 +540,14 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       Link.configure({
         openOnClick: true,
       }),
-      TiptapUnderline
+      TiptapUnderline,
+      FontFamily,
+      Highlight,
+      TaskItem.configure({ nested: true }),
+      TaskList,
+      Subscript,
+      Superscript,
+      FontSize
     ],
     content: '<p></p>',
     onUpdate: ({ editor }) => {
@@ -496,7 +557,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
     },
     editorProps: {
         attributes: {
-            class: 'prose max-w-none focus:outline-none min-h-[200px] tiptap-content'
+            class: 'prose max-w-none focus:outline-none min-h-[200px] tiptap-content p-4',
+            spellcheck: 'true'
         },
         handlePaste: (view, event, slice) => {
             const items = Array.from(event.clipboardData?.items || []);
@@ -554,11 +616,22 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   useEffect(() => {
       if (editor && selectedNoteId && data.notes[selectedNoteId]) {
           const content = data.notes[selectedNoteId].content;
+          // Prevent unnecessary re-renders if content is same (except focused typing)
           if (editor.getHTML() !== content) {
+              // Only set content if we are switching notes or external update
               editor.commands.setContent(content);
           }
       }
   }, [selectedNoteId, editor]);
+
+  // Search in Editor Logic
+  const handleEditorSearch = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!editor || !editorSearchQuery) return;
+      
+      const json = editor.getJSON();
+      alert("Tipp: Nutze Browser-Suche (Ctrl+F) für beste Ergebnisse in diesem Editor.");
+  };
 
   const removeAttachment = (fileId: string) => {
       if (!selectedNoteId) return;
@@ -881,6 +954,16 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       onUpdate({ ...data, categoryRules: updatedRules });
   };
 
+  const insertTable = () => {
+      setTableModal({ open: true, rows: 3, cols: 3 });
+  };
+
+  const confirmInsertTable = () => {
+      if (!editor) return;
+      editor.chain().focus().insertTable({ rows: tableModal.rows, cols: tableModal.cols, withHeaderRow: true }).run();
+      setTableModal({ ...tableModal, open: false });
+  };
+
   return (
     <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-hidden relative min-h-[calc(100dvh-150px)] w-full">
       {/* 1. SIDEBAR */}
@@ -963,45 +1046,124 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
              </>
          ) : (
              <div className="flex flex-col h-full bg-white relative">
-                 <div className="flex flex-wrap items-center gap-1 p-2 border-b border-gray-100 bg-gray-50 shrink-0">
-                    <button onClick={() => setIsEditMode(false)} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Beenden"><ArrowLeft size={16}/></button>
-                    
-                    {/* FORMATTING TOOLBAR */}
-                    <button onClick={() => editor?.chain().focus().toggleBold().run()} className={`p-1.5 rounded ${editor?.isActive('bold') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Bold size={14}/></button>
-                    <button onClick={() => editor?.chain().focus().toggleItalic().run()} className={`p-1.5 rounded ${editor?.isActive('italic') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Italic size={14}/></button>
-                    <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Underline size={14}/></button>
-                    
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    
-                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 1 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H1</button>
-                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 2 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H2</button>
-                    <button onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} className={`p-1.5 rounded text-xs font-bold ${editor?.isActive('heading', { level: 3 }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}>H3</button>
+                 {/* EDITOR TOOLBAR */}
+                 <div className="flex flex-col border-b border-gray-100 bg-gray-50 shrink-0">
+                    <div className="flex items-center gap-1 p-2 flex-wrap">
+                        <button onClick={() => setIsEditMode(false)} className="p-1.5 hover:bg-gray-200 rounded text-gray-600 mr-2" title="Beenden"><ArrowLeft size={16}/></button>
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        
+                        {/* FONT FAMILY */}
+                        <select onChange={(e) => editor?.chain().focus().setFontFamily(e.target.value).run()} className="bg-transparent text-xs font-bold text-gray-600 outline-none w-20">
+                            <option value="Inter">Default</option>
+                            <option value="serif">Serif</option>
+                            <option value="monospace">Mono</option>
+                            <option value="cursive">Cursive</option>
+                        </select>
 
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        {/* FONT SIZE (H1-H3 + P) */}
+                        <select onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'p') editor?.chain().focus().setParagraph().run();
+                            else if (val.startsWith('h')) editor?.chain().focus().toggleHeading({ level: parseInt(val.replace('h', '')) as any }).run();
+                            else editor?.chain().focus().setFontSize(val).run();
+                        }} className="bg-transparent text-xs font-bold text-gray-600 outline-none w-16">
+                            <option value="p">Text</option>
+                            <option value="h1">H1</option>
+                            <option value="h2">H2</option>
+                            <option value="h3">H3</option>
+                            <option value="12px">12px</option>
+                            <option value="14px">14px</option>
+                            <option value="18px">18px</option>
+                            <option value="24px">24px</option>
+                        </select>
 
-                    <button onClick={() => editor?.chain().focus().toggleBulletList().run()} className={`p-1.5 rounded ${editor?.isActive('bulletList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><List size={14}/></button>
-                    <button onClick={() => editor?.chain().focus().toggleOrderedList().run()} className={`p-1.5 rounded ${editor?.isActive('orderedList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><ListOrdered size={14}/></button>
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
 
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        {/* BASIC FORMATTING */}
+                        <button onClick={() => editor?.chain().focus().toggleBold().run()} className={`p-1.5 rounded ${editor?.isActive('bold') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Bold size={14}/></button>
+                        <button onClick={() => editor?.chain().focus().toggleItalic().run()} className={`p-1.5 rounded ${editor?.isActive('italic') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Italic size={14}/></button>
+                        <button onClick={() => editor?.chain().focus().toggleUnderline().run()} className={`p-1.5 rounded ${editor?.isActive('underline') ? 'bg-gray-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Underline size={14}/></button>
+                        <button onClick={() => (editor?.chain().focus() as any).toggleHighlight().run()} className={`p-1.5 rounded ${editor?.isActive('highlight') ? 'bg-yellow-200 text-black' : 'hover:bg-gray-100 text-gray-600'}`}><Highlighter size={14}/></button>
+                        
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
 
-                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('left').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'left' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignLeft size={14}/></button>
-                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('center').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'center' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignCenter size={14}/></button>
-                    <button onClick={() => (editor?.chain().focus() as any).setTextAlign('right').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'right' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignRight size={14}/></button>
+                        <button onClick={() => editor?.chain().focus().toggleBulletList().run()} className={`p-1.5 rounded ${editor?.isActive('bulletList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><List size={14}/></button>
+                        <button onClick={() => editor?.chain().focus().toggleOrderedList().run()} className={`p-1.5 rounded ${editor?.isActive('orderedList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><ListOrdered size={14}/></button>
+                        <button onClick={() => editor?.chain().focus().toggleTaskList().run()} className={`p-1.5 rounded ${editor?.isActive('taskList') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><CheckSquare size={14}/></button>
 
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    
-                    <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer">
-                        <Type size={14} style={{color: editor?.getAttributes('textStyle').color}} />
-                        <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()} />
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+
+                        {/* ALIGNMENT */}
+                        <button onClick={() => (editor?.chain().focus() as any).setTextAlign('left').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'left' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignLeft size={14}/></button>
+                        <button onClick={() => (editor?.chain().focus() as any).setTextAlign('center').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'center' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignCenter size={14}/></button>
+                        <button onClick={() => (editor?.chain().focus() as any).setTextAlign('right').run()} className={`p-1.5 rounded ${editor?.isActive({ textAlign: 'right' }) ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><AlignRight size={14}/></button>
+
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        
+                        {/* COLOR */}
+                        <div className="relative group p-1.5 hover:bg-gray-200 rounded text-gray-600 cursor-pointer">
+                            <Type size={14} style={{color: editor?.getAttributes('textStyle').color}} />
+                            <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer" onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()} />
+                        </div>
+
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        
+                        {/* SUBSCRIPT / SUPERSCRIPT */}
+                        <button onClick={() => (editor?.chain().focus() as any).toggleSubscript().run()} className={`p-1.5 rounded ${editor?.isActive('subscript') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><SubIcon size={12}/></button>
+                        <button onClick={() => (editor?.chain().focus() as any).toggleSuperscript().run()} className={`p-1.5 rounded ${editor?.isActive('superscript') ? 'bg-gray-200' : 'hover:bg-gray-100 text-gray-600'}`}><SupIcon size={12}/></button>
+
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        
+                        {/* INSERTS */}
+                        <button onClick={insertTable} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><TableIcon size={14}/></button>
+                        <label className="p-1.5 hover:bg-gray-200 rounded cursor-pointer text-gray-600"><ImagePlus size={14}/><input type="file" className="hidden" accept="image/*" onChange={handleImageUpload}/></label>
+                        
+                        <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                        
+                        {/* SEARCH */}
+                        <button onClick={() => { setIsSearchOpen(!isSearchOpen); }} className={`p-1.5 rounded ${isSearchOpen ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100 text-gray-600'}`}><SearchIcon size={14}/></button>
                     </div>
 
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    
-                    <button onClick={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} className="p-1.5 hover:bg-gray-200 rounded text-gray-600"><TableIcon size={14}/></button>
-                    
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    {/* TABLE CONTEXT MENU */}
+                    {editor && editor.isActive('table') && (
+                        <div className="flex items-center gap-1 p-1 bg-blue-50 border-t border-blue-100 overflow-x-auto flex-nowrap animate-in slide-in-from-top-1">
+                            <span className="text-[9px] font-black text-blue-400 uppercase tracking-wider px-2">Tabelle:</span>
+                            <button onClick={() => editor.chain().focus().addColumnBefore().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Columns size={12}/> +Links</button>
+                            <button onClick={() => editor.chain().focus().addColumnAfter().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Columns size={12}/> +Rechts</button>
+                            <button onClick={() => editor.chain().focus().deleteColumn().run()} className="p-1 hover:bg-red-100 rounded text-red-500 text-[10px] flex gap-1"><Trash size={12}/> Spalte</button>
+                            <div className="w-px h-3 bg-blue-200 mx-1"></div>
+                            <button onClick={() => editor.chain().focus().addRowBefore().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Rows size={12}/> +Oben</button>
+                            <button onClick={() => editor.chain().focus().addRowAfter().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Rows size={12}/> +Unten</button>
+                            <button onClick={() => editor.chain().focus().deleteRow().run()} className="p-1 hover:bg-red-100 rounded text-red-500 text-[10px] flex gap-1"><Trash size={12}/> Zeile</button>
+                            <div className="w-px h-3 bg-blue-200 mx-1"></div>
+                            <button onClick={() => editor.chain().focus().mergeCells().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Combine size={12}/> Merge</button>
+                            <button onClick={() => editor.chain().focus().splitCell().run()} className="p-1 hover:bg-blue-100 rounded text-blue-600 text-[10px] flex gap-1"><Split size={12}/> Split</button>
+                            <div className="flex-1"></div>
+                            <button onClick={() => editor.chain().focus().deleteTable().run()} className="p-1 hover:bg-red-100 rounded text-red-600 text-[10px] font-bold flex gap-1 bg-white border border-red-100 shadow-sm"><X size={12}/> Tabelle Löschen</button>
+                        </div>
+                    )}
 
-                    <label className="p-1.5 hover:bg-gray-200 rounded cursor-pointer text-gray-600"><ImagePlus size={14}/><input type="file" className="hidden" accept="image/*" onChange={handleImageUpload}/></label>
+                    {/* SEARCH BAR */}
+                    {isSearchOpen && (
+                        <div className="flex items-center gap-2 p-2 bg-yellow-50 border-t border-yellow-100 animate-in slide-in-from-top-1">
+                            <SearchIcon size={14} className="text-yellow-600"/>
+                            <input 
+                                type="text" 
+                                placeholder="Suchen..." 
+                                className="text-xs bg-white border border-yellow-200 rounded px-2 py-1 outline-none w-40 focus:ring-1 focus:ring-yellow-400"
+                                onChange={(e) => {
+                                    // Basic Highlight Search Simulation
+                                    // Real "Find Next" requires complex traversing or external plugin not in core list.
+                                    // We will alert user to use Browser Search for robustness.
+                                }}
+                                onKeyDown={(e) => {
+                                    if(e.key === 'Enter') alert("Bitte benutze die Browser-Suche (Ctrl+F / Cmd+F) für zuverlässiges Finden & Ersetzen.");
+                                }}
+                            />
+                            <button onClick={() => setIsSearchOpen(false)} className="text-yellow-600 hover:text-yellow-800"><X size={14}/></button>
+                            <span className="text-[9px] text-yellow-600 ml-auto">Nutze Ctrl+F für beste Ergebnisse</span>
+                        </div>
+                    )}
                  </div>
                  
                  <div className="px-4 py-3 border-b border-gray-50">
@@ -1177,6 +1339,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           </div>
       )}
 
+      {/* NEW: FLOATING TOOLTIP RENDERER (FIXED & COMPACT) */}
       {tooltip && (
           <div 
               className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10"
@@ -1184,6 +1347,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           >
               <div className="font-bold mb-1 border-b border-white/10 pb-1 text-blue-300 uppercase tracking-wider">{tooltip.title}</div>
               <div className="text-gray-300 font-medium">{tooltip.content}</div>
+              {/* Triangle pointing left */}
               <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-r-[6px] border-r-black/90 border-b-[5px] border-b-transparent"></div>
           </div>
       )}
