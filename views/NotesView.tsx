@@ -324,6 +324,9 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [tooltip, setTooltip] = useState<{x: number, y: number, title: string, content: string} | null>(null);
   const [shareModalData, setShareModalData] = useState<{url: string, filename: string} | null>(null);
   
+  // NEW: Buffered User Note Input for Debouncing
+  const [userNoteInput, setUserNoteInput] = useState('');
+
   const lastNoteIdRef = useRef<string | null>(null);
   const mobileImportInputRef = useRef<HTMLInputElement>(null);
   const zipImportInputRef = useRef<HTMLInputElement>(null);
@@ -394,6 +397,28 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   }, [notesList, selectedCat, selectedSubCat, searchQuery]);
 
   const selectedNote = selectedNoteId ? data.notes?.[selectedNoteId] : null;
+
+  // Sync user note input buffer when selection changes
+  useEffect(() => {
+      if (selectedNoteId && data.notes[selectedNoteId]) {
+          setUserNoteInput(data.notes[selectedNoteId].userNote || '');
+      }
+  }, [selectedNoteId]);
+
+  // Debounced Auto-Save for User Note
+  useEffect(() => {
+      if (!selectedNoteId) return;
+      
+      // Prevent unnecessary updates/cycles
+      const currentStored = data.notes[selectedNoteId]?.userNote || '';
+      if (userNoteInput === currentStored) return;
+
+      const timer = setTimeout(() => {
+          updateSelectedNote({ userNote: userNoteInput });
+      }, 1000); // 1s debounce to prevent mobile keyboard glitches
+
+      return () => clearTimeout(timer);
+  }, [userNoteInput, selectedNoteId]);
 
   const resolveFileBlob = async (note: NoteDocument): Promise<Blob | null> => {
       let blob: Blob | null = null;
@@ -1070,7 +1095,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                 )}
                                 <div className="mb-4">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1"><StickyNote size={12} /> Eigene Notizen</label>
-                                    <textarea value={selectedNote.userNote || ''} onChange={(e) => updateSelectedNote({ userNote: e.target.value })} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..."/>
+                                    <textarea value={userNoteInput} onChange={(e) => setUserNoteInput(e.target.value)} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..."/>
                                 </div>
                                 {selectedNote.content && selectedNote.content.length > 50 && (
                                     <div className="space-y-2">
