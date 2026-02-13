@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileDown, 
@@ -714,12 +713,134 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
               </div>
               
               <div className="flex-1 overflow-y-scroll p-4 md:p-8 space-y-8 bg-white overscroll-contain">
-                 {/* ... content of modal kept same as previous to avoid removing features ... */}
-                 {/* Re-implementing simplified to save space in this diff, assume full implementation exists in final output */}
-                 <div className="p-4 bg-yellow-50 rounded text-yellow-700 text-sm">
-                     Detail-Editor für {data.tax.expenses[specialExpenseModalIdx].cat} (Vollständiges Modul wird beibehalten).
-                 </div>
-                 {/* In a real scenario, the full modal code from the previous TaxView would be here. */}
+                 {/* CHILD SUPPORT FORM */}
+                 {data.tax.expenses[specialExpenseModalIdx].cat === 'Kindesunterhalt' && data.tax.expenses[specialExpenseModalIdx].childDetails && (
+                     <div className="space-y-8">
+                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                             <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100">
+                                 <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Baby size={16}/> Kind & Ausbildung</h4>
+                                 <div className="space-y-4">
+                                     <div className="grid grid-cols-2 gap-4">
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.vorname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, vorname: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.nachname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, nachname: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                     </div>
+                                     <div className="grid grid-cols-2 gap-4">
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Geburtsdatum</label><input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.geburtsdatum} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, geburtsdatum: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Ausbildungsende</label><input type="date" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.ausbildungsende || ''} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, ausbildungsende: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                     </div>
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Schule / Ausbildung</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.schule_ausbildung} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, schule_ausbildung: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                 </div>
+                             </div>
+                             <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100">
+                                 <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Wallet size={16}/> Zahlungsempfänger</h4>
+                                 <div className="space-y-4">
+                                     <div className="grid grid-cols-2 gap-4">
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.empfaenger_vorname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_vorname: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                         <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.empfaenger_name} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_name: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                     </div>
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Adresse (PLZ/Ort)</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.empfaenger_plz_ort} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'childDetails', {...data.tax.expenses[specialExpenseModalIdx].childDetails, empfaenger_plz_ort: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                 </div>
+                             </div>
+                         </div>
+                         {/* Payment Schedule */}
+                         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                             <div className="flex justify-between items-center mb-4">
+                                 <h4 className="text-sm font-black text-gray-800 uppercase tracking-widest flex items-center gap-2"><CalendarCheck size={16} className="text-blue-500"/> Zahlungsplan</h4>
+                                 <div className="flex gap-2">
+                                     <button onClick={() => toggleFrequency(specialExpenseModalIdx, 'childDetails', 'fix')} className={`px-3 py-1 rounded-lg text-xs font-bold ${data.tax.expenses[specialExpenseModalIdx].childDetails!.paymentFrequency === 'fix' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>Fix (x12)</button>
+                                     <button onClick={() => toggleFrequency(specialExpenseModalIdx, 'childDetails', 'individuell')} className={`px-3 py-1 rounded-lg text-xs font-bold ${data.tax.expenses[specialExpenseModalIdx].childDetails!.paymentFrequency === 'individuell' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>Variabel</button>
+                                 </div>
+                             </div>
+                             {data.tax.expenses[specialExpenseModalIdx].childDetails!.paymentFrequency === 'fix' ? (
+                                 <div className="flex items-center gap-4">
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Monatlicher Fixbetrag</label>
+                                         <input type="number" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.monthlyAmounts[0]} onChange={(e) => handleFixAmountChange(specialExpenseModalIdx, 'childDetails', parseFloat(e.target.value) || 0)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-xl font-black outline-none focus:ring-4 focus:ring-blue-50"/>
+                                     </div>
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
+                                         <select value={data.tax.expenses[specialExpenseModalIdx].currency} onChange={(e) => handleCurrencyChange(specialExpenseModalIdx, e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold outline-none"><option value="CHF">CHF</option><option value="EUR">EUR</option><option value="USD">USD</option></select>
+                                     </div>
+                                     <div className="w-32 text-right">
+                                         <span className="block text-2xl font-black text-blue-600">{data.tax.expenses[specialExpenseModalIdx].amount.toLocaleString()}</span>
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase">Total Jahr</span>
+                                     </div>
+                                 </div>
+                             ) : (
+                                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-4">
+                                     {months.map((m, i) => (
+                                         <div key={m} className="space-y-1">
+                                             <label className="text-[10px] font-bold text-gray-400 uppercase">{m}</label>
+                                             <input type="number" value={data.tax.expenses[specialExpenseModalIdx].childDetails!.monthlyAmounts[i]} onChange={(e) => {
+                                                 const newAmts = [...data.tax.expenses[specialExpenseModalIdx].childDetails!.monthlyAmounts];
+                                                 newAmts[i] = parseFloat(e.target.value) || 0;
+                                                 handleMonthlyAmountsChange(specialExpenseModalIdx, 'childDetails', newAmts);
+                                             }} className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold text-center outline-none focus:ring-2 focus:ring-blue-100"/>
+                                         </div>
+                                     ))}
+                                 </div>
+                             )}
+                         </div>
+                     </div>
+                 )}
+
+                 {/* ALIMONY FORM */}
+                 {data.tax.expenses[specialExpenseModalIdx].cat === 'Alimente' && data.tax.expenses[specialExpenseModalIdx].alimonyDetails && (
+                     <div className="space-y-8">
+                         <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100">
+                             <h4 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Heart size={16}/> Empfänger & Details</h4>
+                             <div className="space-y-4">
+                                 <div className="grid grid-cols-2 gap-4">
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Vorname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.empfaenger_vorname} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_vorname: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Nachname</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.empfaenger_name} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_name: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                 </div>
+                                 <div className="grid grid-cols-2 gap-4">
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Adresse (PLZ/Ort)</label><input type="text" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.empfaenger_plz_ort} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, empfaenger_plz_ort: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                     <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase">Getrennt seit</label><input type="date" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.getrennt_seit} onChange={(e) => handleDetailChange(specialExpenseModalIdx, 'alimonyDetails', {...data.tax.expenses[specialExpenseModalIdx].alimonyDetails, getrennt_seit: e.target.value})} className="w-full p-2 bg-white border border-gray-200 rounded-lg text-sm font-bold outline-none"/></div>
+                                 </div>
+                             </div>
+                         </div>
+                         {/* Payment Schedule (Identical logic to child support but distinct type) */}
+                         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                             <div className="flex justify-between items-center mb-4">
+                                 <h4 className="text-sm font-black text-gray-800 uppercase tracking-widest flex items-center gap-2"><CalendarCheck size={16} className="text-blue-500"/> Zahlungsplan</h4>
+                                 <div className="flex gap-2">
+                                     <button onClick={() => toggleFrequency(specialExpenseModalIdx, 'alimonyDetails', 'fix')} className={`px-3 py-1 rounded-lg text-xs font-bold ${data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.paymentFrequency === 'fix' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>Fix (x12)</button>
+                                     <button onClick={() => toggleFrequency(specialExpenseModalIdx, 'alimonyDetails', 'individuell')} className={`px-3 py-1 rounded-lg text-xs font-bold ${data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.paymentFrequency === 'individuell' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>Variabel</button>
+                                 </div>
+                             </div>
+                             {data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.paymentFrequency === 'fix' ? (
+                                 <div className="flex items-center gap-4">
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Monatlicher Fixbetrag</label>
+                                         <input type="number" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.monthlyAmounts[0]} onChange={(e) => handleFixAmountChange(specialExpenseModalIdx, 'alimonyDetails', parseFloat(e.target.value) || 0)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-xl font-black outline-none focus:ring-4 focus:ring-blue-50"/>
+                                     </div>
+                                     <div className="flex-1 space-y-1">
+                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
+                                         <select value={data.tax.expenses[specialExpenseModalIdx].currency} onChange={(e) => handleCurrencyChange(specialExpenseModalIdx, e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-xl font-bold outline-none"><option value="CHF">CHF</option><option value="EUR">EUR</option><option value="USD">USD</option></select>
+                                     </div>
+                                     <div className="w-32 text-right">
+                                         <span className="block text-2xl font-black text-blue-600">{data.tax.expenses[specialExpenseModalIdx].amount.toLocaleString()}</span>
+                                         <span className="text-[10px] font-bold text-gray-400 uppercase">Total Jahr</span>
+                                     </div>
+                                 </div>
+                             ) : (
+                                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-4">
+                                     {months.map((m, i) => (
+                                         <div key={m} className="space-y-1">
+                                             <label className="text-[10px] font-bold text-gray-400 uppercase">{m}</label>
+                                             <input type="number" value={data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.monthlyAmounts[i]} onChange={(e) => {
+                                                 const newAmts = [...data.tax.expenses[specialExpenseModalIdx].alimonyDetails!.monthlyAmounts];
+                                                 newAmts[i] = parseFloat(e.target.value) || 0;
+                                                 handleMonthlyAmountsChange(specialExpenseModalIdx, 'alimonyDetails', newAmts);
+                                             }} className="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold text-center outline-none focus:ring-2 focus:ring-blue-100"/>
+                                         </div>
+                                     ))}
+                                 </div>
+                             )}
+                         </div>
+                     </div>
+                 )}
               </div>
               <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-4 shrink-0">
                  <button onClick={() => setSpecialExpenseModalIdx(null)} className="px-10 py-4 bg-[#16325c] text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/20">

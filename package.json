@@ -27,6 +27,7 @@
     "xlsx": "^0.18.5",
     "@google/genai": "^1.40.0",
     "heic2any": "^0.0.4",
+    "html2pdf.js": "^0.10.2",
     "@tiptap/react": "^2.10.3",
     "@tiptap/pm": "^2.10.3",
     "@tiptap/core": "^2.10.3",

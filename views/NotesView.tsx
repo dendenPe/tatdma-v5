@@ -7,66 +7,67 @@ import {
   Trash2, 
   Tag, 
   Inbox, 
-  PenTool,
-  Loader2,
-  Eye,
-  Info,
-  Database,
-  ScanLine,
-  Check,
-  X,
-  Settings,
-  FileSpreadsheet,
-  FileType,
-  Image as ImageIcon,
-  Bold,
-  Italic,
-  Underline,
-  List,
-  Undo,
-  Redo,
-  ImagePlus,
-  ArrowLeft,
-  UploadCloud,
-  FileArchive,
-  Receipt,
-  Sparkles,
-  Download,
-  File as FileIcon,
-  ZoomIn,
-  Table as TableIcon,
-  Palette,
-  ArrowUp,
-  ArrowDown,
-  ArrowLeft as ArrowLeftIcon,
-  ArrowRight as ArrowRightIcon,
-  Layout,
-  ChevronDown,
-  ChevronRight,
-  BrainCircuit,
-  StickyNote,
-  Share2,
-  Maximize2,
-  Minimize2,
-  Edit3,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  ListOrdered,
-  Heading1,
-  Heading2,
-  Heading3,
-  Type,
-  CheckSquare,
-  Highlighter,
-  Subscript as SubIcon,
-  Superscript as SupIcon,
-  Columns,
-  Rows,
-  Trash,
-  Combine,
-  Split,
-  Search as SearchIcon
+  PenTool, 
+  Loader2, 
+  Eye, 
+  Info, 
+  Database, 
+  ScanLine, 
+  Check, 
+  X, 
+  Settings, 
+  FileSpreadsheet, 
+  FileType, 
+  Image as ImageIcon, 
+  Bold, 
+  Italic, 
+  Underline, 
+  List, 
+  Undo, 
+  Redo, 
+  ImagePlus, 
+  ArrowLeft, 
+  UploadCloud, 
+  FileArchive, 
+  Receipt, 
+  Sparkles, 
+  Download, 
+  File as FileIcon, 
+  ZoomIn, 
+  Table as TableIcon, 
+  Palette, 
+  ArrowUp, 
+  ArrowDown, 
+  ArrowLeft as ArrowLeftIcon, 
+  ArrowRight as ArrowRightIcon, 
+  Layout, 
+  ChevronDown, 
+  ChevronRight, 
+  BrainCircuit, 
+  StickyNote, 
+  Share2, 
+  Maximize2, 
+  Minimize2, 
+  Edit3, 
+  AlignLeft, 
+  AlignCenter, 
+  AlignRight, 
+  ListOrdered, 
+  Heading1, 
+  Heading2, 
+  Heading3, 
+  Type, 
+  CheckSquare, 
+  Highlighter, 
+  Subscript as SubIcon, 
+  Superscript as SupIcon, 
+  Columns, 
+  Rows, 
+  Trash, 
+  Combine, 
+  Split, 
+  Search as SearchIcon, 
+  Printer 
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // TIPTAP IMPORTS
@@ -88,6 +89,8 @@ import { TaskItem } from '@tiptap/extension-task-item';
 import { TaskList } from '@tiptap/extension-task-list';
 import { Subscript } from '@tiptap/extension-subscript';
 import { Superscript } from '@tiptap/extension-superscript';
+// @ts-ignore
+import html2pdf from 'html2pdf.js';
 
 import { AppData, NoteDocument, DocCategory, CATEGORY_STRUCTURE, TaxExpense } from '../types';
 import { DocumentService } from '../services/documentService';
@@ -509,6 +512,20 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedNote } });
   };
 
+  // --- CRITICAL FIX FOR STALE CLOSURE IN TIPTAP ---
+  // We use a ref to hold the latest update function and ID
+  const editorStateRef = useRef({ selectedNoteId, updateSelectedNote });
+  useEffect(() => {
+      editorStateRef.current = { selectedNoteId, updateSelectedNote };
+  }, [selectedNoteId, data]); // Update whenever data changes to ensure we have latest data closure
+
+  const safeEditorUpdate = (content: string) => {
+      const { selectedNoteId, updateSelectedNote } = editorStateRef.current;
+      if (selectedNoteId) {
+          updateSelectedNote({ content });
+      }
+  };
+
   const addAttachment = async (blob: Blob) => {
       if (!selectedNoteId) return;
       const fileId = `att_${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
@@ -550,9 +567,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
     ],
     content: '<p></p>',
     onUpdate: ({ editor }) => {
-        if(selectedNoteId) {
-            updateSelectedNote({ content: editor.getHTML() });
-        }
+        // Use the safe wrapper to avoid stale closure
+        safeEditorUpdate(editor.getHTML());
     },
     editorProps: {
         attributes: {
@@ -611,17 +627,34 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
     }
   });
 
-  // Sync content when note changes
+  // Sync content when note changes (ONLY WHEN ID CHANGES)
+  // This prevents cursor jumping by not syncing on every keypress from the parent 'data' prop
   useEffect(() => {
       if (editor && selectedNoteId && data.notes[selectedNoteId]) {
+          // IMPORTANT: Only update content if note ID changed or editor is empty
+          // This avoids the loop where typing updates data -> updates prop -> resets editor cursor
+          if (editor.getText() === '' && data.notes[selectedNoteId].content === '<p></p>') return;
+          
+          // Only force update if the ID is different from what we think it is (note switch)
+          // Or if we implement a 'lastUpdated' timestamp check.
+          // For now, we rely on the fact that switching selectedNoteId unmounts/remounts logic or we track it.
           const content = data.notes[selectedNoteId].content;
-          // Prevent unnecessary re-renders if content is same (except focused typing)
-          if (editor.getHTML() !== content) {
-              // Only set content if we are switching notes or external update
-              editor.commands.setContent(content);
-          }
+          
+          // Simple check: If the content is vastly different (like a new note load), set it.
+          // But to be safe, we just set it when selectedNoteId changes.
+          // We need a ref to track the *previous* selectedNoteId to know if we switched.
       }
-  }, [selectedNoteId, editor]);
+  }, [selectedNoteId, editor]); // Removed data.notes dependency to fix cursor issues
+
+  // Better approach for content sync:
+  const prevNoteIdRef = useRef<string | null>(null);
+  useEffect(() => {
+      if (selectedNoteId && selectedNoteId !== prevNoteIdRef.current && editor && data.notes[selectedNoteId]) {
+          editor.commands.setContent(data.notes[selectedNoteId].content);
+          prevNoteIdRef.current = selectedNoteId;
+      }
+  }, [selectedNoteId, editor, data.notes]);
+
 
   // Search in Editor Logic
   const handleEditorSearch = (e: React.FormEvent) => {
@@ -652,33 +685,233 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       }
   };
 
-  const handleNativeShare = async () => {
-      if (!activeFileBlob || !selectedNote) return;
+  // --- NATIVE PRINT FUNCTION (THE POWERFUL OPTION) ---
+  const handleNativePrint = () => {
+      if (!selectedNote) return;
       
-      try {
-          // 1. Convert Blob to File
-          const fileName = selectedNote.fileName || `doc_${selectedNote.id}.pdf`;
-          const mimeType = activeFileBlob.type || 'application/pdf';
-          const file = new File([activeFileBlob], fileName, { type: mimeType });
+      // We create a temporary iframe to print just the note content without UI clutter
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'absolute';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+      
+      const doc = iframe.contentWindow?.document;
+      if (!doc) return;
 
-          // 2. Check and Share using Navigator API
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-              await navigator.share({
-                  files: [file],
-                  title: selectedNote.title || 'Dokument',
-                  text: selectedNote.title
-              });
-          } else {
-              // Fallback for desktop browsers
-              const url = URL.createObjectURL(activeFileBlob);
-              setShareModalData({ url, filename: fileName });
+      const content = editor ? editor.getHTML() : selectedNote.content;
+
+      doc.open();
+      doc.write(`
+          <html>
+          <head>
+              <title>${selectedNote.title}</title>
+              <style>
+                  @page { margin: 20mm; size: A4; }
+                  body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; color: #000; padding: 20px; }
+                  img { max-width: 100%; height: auto; }
+                  table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+                  td, th { border: 1px solid #ccc; padding: 8px; text-align: left; }
+                  h1, h2, h3 { color: #111; margin-top: 1.5em; margin-bottom: 0.5em; }
+                  h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; font-size: 24px; }
+                  /* HIGHLIGHT FIX */
+                  mark { background-color: #fef08a !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                  /* LIST FIX */
+                  ul, ol { padding-left: 20px; margin-bottom: 1em; }
+                  li { margin-bottom: 4px; padding-left: 5px; }
+                  /* EMPTY LINES */
+                  p:empty::before { content: '\\00a0'; }
+              </style>
+          </head>
+          <body>
+              <h1>${selectedNote.title}</h1>
+              <div class="content">${content}</div>
+          </body>
+          </html>
+      `);
+      doc.close();
+
+      // Wait for images to load before printing
+      setTimeout(() => {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+          // Cleanup
+          setTimeout(() => document.body.removeChild(iframe), 1000);
+      }, 500);
+  };
+
+  const handleNativeShare = async () => {
+      if (!selectedNote) return;
+
+      // CASE 1: Attachment (PDF/Image) - Existing Logic
+      if (activeFileBlob) {
+          try {
+              const fileName = selectedNote.fileName || `doc_${selectedNote.id}.pdf`;
+              const mimeType = activeFileBlob.type || 'application/pdf';
+              const file = new File([activeFileBlob], fileName, { type: mimeType });
+
+              if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                  await navigator.share({
+                      files: [file],
+                      title: selectedNote.title || 'Dokument',
+                      text: selectedNote.title
+                  });
+              } else {
+                  const url = URL.createObjectURL(activeFileBlob);
+                  setShareModalData({ url, filename: fileName });
+              }
+          } catch (e: any) {
+              if (e.name !== 'AbortError') {
+                  console.error("Share failed", e);
+                  const url = URL.createObjectURL(activeFileBlob);
+                  setShareModalData({ url, filename: selectedNote.fileName || 'doc.pdf' });
+              }
           }
-      } catch (e: any) {
-          if (e.name !== 'AbortError') {
-              console.error("Share failed", e);
-              // Fallback
-              const url = URL.createObjectURL(activeFileBlob);
-              setShareModalData({ url, filename: selectedNote.fileName || 'doc.pdf' });
+          return;
+      }
+
+      // CASE 2: Text Note -> GENERATE PDF via html2pdf (Screenshots the DOM for perfect fidelity)
+      if (selectedNote.type === 'note' && editor) {
+          try {
+              // PRE-PROCESS HTML FOR PDF GENERATION TO FIX BUGS
+              let cleanHtml = editor.getHTML();
+              
+              // 1. Fix Empty Lines: Ensure they have content
+              cleanHtml = cleanHtml.replace(/<p><\/p>/g, '<p>&nbsp;</p>');
+              
+              // 2. Prepare Container
+              const element = document.createElement('div');
+              element.innerHTML = `
+                  <div class="pdf-container">
+                    <h1 style="font-size:24px; font-weight:bold; margin-bottom:20px; border-bottom:2px solid #eee; padding-bottom:10px;">${selectedNote.title}</h1>
+                    <div class="tiptap-content prose">${cleanHtml}</div>
+                  </div>
+              `;
+              
+              // 3. UNWRAP P TAGS IN LISTS (Tiptap adds <p> inside <li> which breaks flow)
+              const listItems = element.querySelectorAll('li p');
+              listItems.forEach(p => {
+                  const parent = p.parentNode;
+                  if (parent) {
+                      while (p.firstChild) {
+                          parent.insertBefore(p.firstChild, p);
+                      }
+                      parent.removeChild(p);
+                  }
+              });
+
+              // CSS for PDF generation - AGGRESSIVE OVERRIDES
+              const style = document.createElement('style');
+              style.innerHTML = `
+                  .pdf-container {
+                      width: 700px !important;
+                      padding: 20px;
+                      background: white;
+                      font-family: Helvetica, Arial, sans-serif;
+                      font-size: 12px;
+                      color: #000;
+                      line-height: 1.5;
+                  }
+                  
+                  /* IMAGES */
+                  img { max-width: 100% !important; height: auto !important; display: block; margin: 10px auto; }
+                  
+                  /* LISTS - THE "NUCLEAR" OPTION: Manual Bullets */
+                  ul, ol {
+                      list-style: none !important; 
+                      padding-left: 0 !important; 
+                      margin-top: 0.5em !important;
+                      margin-bottom: 0.5em !important;
+                  }
+                  li {
+                      position: relative !important;
+                      padding-left: 25px !important; /* Space for bullet */
+                      margin-bottom: 4px !important;
+                      text-align: left !important;
+                  }
+                  
+                  /* Custom Bullet for UL */
+                  ul li::before {
+                      content: "•";
+                      position: absolute;
+                      left: 5px;
+                      top: 0;
+                      font-weight: bold;
+                  }
+                  
+                  /* Custom Number for OL */
+                  ol { counter-reset: item; }
+                  ol li::before {
+                      content: counter(item) ". ";
+                      counter-increment: item;
+                      position: absolute;
+                      left: 0;
+                      top: 0;
+                      font-weight: bold;
+                  }
+                  
+                  /* HIGHLIGHTS - Fix for overlay opacity using Mix Blend Mode */
+                  mark {
+                      background-color: #fef08a !important;
+                      color: inherit !important;
+                      padding: 0 2px;
+                      border-radius: 2px;
+                      mix-blend-mode: multiply; /* Allows text to show through */
+                      display: inline;
+                  }
+                  
+                  /* EMPTY LINES CHECK */
+                  p:empty::before {
+                      content: '\\00a0';
+                      display: inline-block;
+                  }
+                  
+                  /* TABLES */
+                  table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+                  td, th { border: 1px solid #ddd; padding: 6px; }
+                  th { background-color: #f3f4f6; font-weight: bold; }
+              `;
+              element.appendChild(style);
+
+              // Use html2pdf to generate blob
+              const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
+              const fileName = `${safeTitle}.pdf`;
+
+              const opt = {
+                  margin: [10, 10, 10, 10] as [number, number, number, number],
+                  filename: fileName,
+                  image: { type: 'jpeg' as const, quality: 0.98 },
+                  html2canvas: { 
+                      scale: 2, 
+                      useCORS: true, 
+                      letterRendering: true,
+                      scrollY: 0, 
+                      scrollX: 0
+                  },
+                  jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+                  pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+              };
+
+              // Generate PDF Blob
+              const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+              
+              const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+              if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                  await navigator.share({
+                      files: [file],
+                      title: selectedNote.title
+                  });
+              } else {
+                  // Fallback for Desktop
+                  const url = URL.createObjectURL(pdfBlob);
+                  setShareModalData({ url, filename: fileName });
+              }
+
+          } catch (e: any) {
+              console.error("Share note failed", e);
+              alert("Fehler beim Erstellen des PDFs. (html2pdf)");
           }
       }
   };
@@ -959,17 +1192,32 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
 
   const confirmInsertTable = () => {
       if (editor) {
-          editor.chain().focus().insertTable({ 
+          editor.commands.insertTable({ 
               rows: tableModal.rows, 
               cols: tableModal.cols, 
               withHeaderRow: true 
-          }).run();
+          });
       }
       setTableModal({ ...tableModal, open: false });
   };
 
   return (
     <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-hidden relative min-h-[calc(100dvh-150px)] w-full">
+      <style>
+      {`
+        /* FIX FOR EMPTY PARAGRAPHS IN EDITOR: Forces height so they don't collapse */
+        .tiptap-content p:empty::before,
+        .tiptap-content p:has(br:only-child)::before {
+            content: '\\00a0';
+            display: inline-block;
+        }
+        /* Ensure P tags always have height even if seemingly empty in preview */
+        .tiptap-content p {
+            min-height: 1.5em; 
+        }
+      `}
+      </style>
+      
       {/* 1. SIDEBAR */}
       <div 
         className={`bg-gray-50 border-r border-gray-100 flex-col shrink-0 hidden md:flex`}
@@ -1174,7 +1422,23 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                      <input type="text" value={selectedNote?.title || ''} onChange={(e) => updateSelectedNote({ title: e.target.value })} className="text-2xl font-black text-gray-800 bg-transparent outline-none w-full placeholder-gray-300" placeholder="Titel..."/>
                  </div>
 
-                 <EditorContent editor={editor} className="flex-1 p-8 overflow-y-auto" />
+                 {/* EDITOR WITH USER NOTES FIELD */}
+                 <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
+                     {/* ADDED: USER NOTE FIELD IN EDITOR MODE */}
+                     <div className="p-4 border-b border-gray-100 bg-gray-50/50 shrink-0">
+                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                             <StickyNote size={12} /> Eigene Notizen (Meta)
+                         </label>
+                         <textarea
+                             value={userNoteInput}
+                             onChange={(e) => setUserNoteInput(e.target.value)}
+                             className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[40px] shadow-sm transition-all"
+                             placeholder="Zusätzliche Notizen / Metadaten..."
+                         />
+                     </div>
+
+                     <EditorContent editor={editor} className="flex-1 p-8" />
+                 </div>
              </div>
          )}
       </div>
@@ -1218,7 +1482,13 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                     {(selectedNote.type === 'pdf' || selectedNote.type === 'image') && activeFileBlob && (
                                         <button onClick={() => setIsMaximized(true)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors hidden md:block shrink-0"><Maximize2 size={16} /></button>
                                     )}
-                                    {activeFileBlob && <button onClick={handleNativeShare} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0"><Share2 size={16} /></button>}
+                                    {/* SHARED ACTIONS */}
+                                    {(activeFileBlob || selectedNote.type === 'note') && (
+                                        <>
+                                            <button onClick={handleNativeShare} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" title="PDF Teilen (Mobil)"><Share2 size={16} /></button>
+                                            {selectedNote.type === 'note' && <button onClick={handleNativePrint} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" title="Drucken / PDF (Native)"><Printer size={16} /></button>}
+                                        </>
+                                    )}
                                     {selectedNote.filePath && <button onClick={openFile} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors shrink-0"><Eye size={16} /></button>}
                                     <button onClick={toggleTaxImport} disabled={isAnalyzingTax} className={`p-1.5 rounded-lg transition-colors border flex items-center justify-center gap-1 shrink-0 ${selectedNote.taxRelevant ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm' : 'bg-white border-gray-100 text-gray-300 hover:text-blue-500 hover:border-blue-100'}`}>{isAnalyzingTax ? <Loader2 size={16} className="animate-spin text-blue-500" /> : <Receipt size={16} />}</button>
                                     <button onClick={() => setIsEditMode(true)} className="p-1.5 bg-[#16325c] text-white rounded-lg hover:bg-blue-800 flex items-center gap-2 text-xs font-bold shadow-sm transition-all shrink-0"><Edit3 size={14}/> <span className="hidden sm:inline">Edit</span></button>
@@ -1241,6 +1511,19 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                        {/* MOVED: User Note Section to be always visible at top of preview */}
+                        <div className="mb-4 bg-amber-50/30 p-4 rounded-xl border border-amber-100/50">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                                <StickyNote size={12} /> Eigene Notizen (Meta)
+                            </label>
+                            <textarea 
+                                value={userNoteInput} 
+                                onChange={(e) => setUserNoteInput(e.target.value)} 
+                                className="w-full p-3 bg-white border border-amber-100 rounded-xl text-sm text-gray-700 placeholder-gray-400 focus:ring-2 focus:ring-amber-100 outline-none resize-y min-h-[80px] shadow-sm transition-all" 
+                                placeholder="Zusätzliche Notizen, Todo's oder Metadaten..."
+                            />
+                        </div>
+
                         {selectedNote.type === 'note' ? (
                             <div className="prose max-w-none text-sm text-gray-700 tiptap-content" dangerouslySetInnerHTML={{ __html: selectedNote.content }} />
                         ) : (
@@ -1259,14 +1542,13 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                         <p className="text-xs">Keine Vorschau verfügbar.</p>
                                     </div>
                                 )}
-                                <div className="mb-4">
-                                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-1"><StickyNote size={12} /> Eigene Notizen</label>
-                                    <textarea value={userNoteInput} onChange={(e) => setUserNoteInput(e.target.value)} className="w-full p-2 bg-amber-50/50 border border-amber-100 rounded-lg text-sm text-gray-700 placeholder-gray-400 focus:ring-1 focus:ring-amber-200 outline-none resize-y min-h-[60px] shadow-sm transition-all" placeholder="Notizen zum Dokument..."/>
-                                </div>
+                                
                                 {selectedNote.content && selectedNote.content.length > 50 && (
-                                    <div className="space-y-2">
-                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Inhalt / Notizen</h5>
-                                        <div className="p-4 bg-white rounded-xl text-sm text-gray-700 leading-relaxed border border-gray-200 shadow-sm overflow-x-auto prose max-w-none tiptap-content" dangerouslySetInnerHTML={{ __html: selectedNote.content }}/>
+                                    <div className="space-y-2 pt-4 border-t border-gray-100">
+                                        <h5 className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Extrahierter Inhalt</h5>
+                                        <div className="p-4 bg-white rounded-xl text-xs text-gray-500 leading-relaxed border border-gray-200 shadow-sm overflow-x-auto max-h-60">
+                                            {stripHtml(selectedNote.content)}
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -1373,6 +1655,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           >
               <div className="font-bold mb-1 border-b border-white/10 pb-1 text-blue-300 uppercase tracking-wider">{tooltip.title}</div>
               <div className="text-gray-300 font-medium">{tooltip.content}</div>
+              {/* Triangle pointing left */}
               <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-0 h-0 border-t-[5px] border-t-transparent border-r-[6px] border-r-black/90 border-b-[5px] border-b-transparent"></div>
           </div>
       )}
