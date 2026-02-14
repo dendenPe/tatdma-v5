@@ -741,14 +741,67 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       }, 500);
   };
 
-  const handleNativeShare = async () => {
+  const handlePrintPdf = () => {
+      if (!activeFileBlob) return;
+      const url = URL.createObjectURL(activeFileBlob);
+      
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.left = '0';
+      iframe.style.top = '0';
+      iframe.style.width = '0px';
+      iframe.style.height = '0px';
+      iframe.style.border = 'none';
+      iframe.src = url;
+      
+      iframe.onload = () => {
+          // Wait a tiny bit for PDF rendering
+          setTimeout(() => {
+              iframe.contentWindow?.focus();
+              iframe.contentWindow?.print();
+          }, 100);
+      };
+      document.body.appendChild(iframe);
+      
+      // Cleanup with extended timeout to ensure print dialog opened
+      setTimeout(() => {
+          document.body.removeChild(iframe);
+          URL.revokeObjectURL(url);
+      }, 60000); 
+  };
+
+  const handleNativeShare = async (forceType?: 'blob' | 'html') => {
       if (!selectedNote) return;
 
-      // CASE 1: Attachment (PDF/Image) - Existing Logic
-      if (activeFileBlob) {
+      // Determine effective mode based on explicit request OR context
+      // If we are in 'blob' mode or asking for blob, prioritize activeFileBlob
+      const useBlob = forceType === 'blob' || (!forceType && activeFileBlob);
+      
+      // However, if the note itself is a text note (type='note') and forceType is NOT blob,
+      // we prefer HTML export, unless activeFileBlob is set AND we didn't ask for HTML.
+      // Refined Logic:
+      // 1. Explicit 'html' -> Generate PDF from text.
+      // 2. Explicit 'blob' -> Share activeFileBlob.
+      // 3. No Arg:
+      //    - If note type is 'pdf'/'image' -> Share blob.
+      //    - If note type is 'note' -> Generate PDF from text (ignoring potential background blobs).
+
+      const effectiveMode = forceType || (selectedNote.type === 'note' ? 'html' : 'blob');
+
+      // CASE 1: Attachment (PDF/Image) - Share Blob
+      if (effectiveMode === 'blob' && activeFileBlob) {
           try {
-              const fileName = selectedNote.fileName || `doc_${selectedNote.id}.pdf`;
+              let fileName = selectedNote.fileName || `doc_${selectedNote.id}`;
               const mimeType = activeFileBlob.type || 'application/pdf';
+              
+              // Force correct extension based on MIME type to prevent sharing as .txt
+              if (mimeType === 'application/pdf' && !fileName.toLowerCase().endsWith('.pdf')) {
+                  fileName = fileName.replace(/\.[^/.]+$/, "") + ".pdf"; 
+                  if (!fileName.endsWith('.pdf')) fileName += ".pdf"; // Double check
+              } else if (mimeType.startsWith('image/') && !fileName.match(/\.(jpg|jpeg|png|webp)$/i)) {
+                   fileName += ".jpg";
+              }
+
               const file = new File([activeFileBlob], fileName, { type: mimeType });
 
               if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -772,10 +825,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       }
 
       // CASE 2: Text Note -> GENERATE PDF via html2pdf (Screenshots the DOM for perfect fidelity)
-      if (selectedNote.type === 'note' && editor) {
+      if (effectiveMode === 'html' && selectedNote.type === 'note') {
           try {
               // PRE-PROCESS HTML FOR PDF GENERATION TO FIX BUGS
-              let cleanHtml = editor.getHTML();
+              // Fallback to selectedNote.content if editor is not available (e.g. read mode)
+              let cleanHtml = editor ? editor.getHTML() : selectedNote.content;
               
               // 1. Fix Empty Lines: Ensure they have content
               cleanHtml = cleanHtml.replace(/<p><\/p>/g, '<p>&nbsp;</p>');
@@ -1485,7 +1539,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                     {/* SHARED ACTIONS */}
                                     {(activeFileBlob || selectedNote.type === 'note') && (
                                         <>
-                                            <button onClick={handleNativeShare} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" title="PDF Teilen (Mobil)"><Share2 size={16} /></button>
+                                            {/* Note Share Button: Explicitly shares HTML content as PDF unless note itself is PDF */}
+                                            <button 
+                                                onClick={() => handleNativeShare(selectedNote.type === 'note' ? 'html' : 'blob')} 
+                                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" 
+                                                title={selectedNote.type === 'note' ? "Notiz als PDF teilen" : "Datei teilen"}
+                                            >
+                                                <Share2 size={16} />
+                                            </button>
+                                            
                                             {selectedNote.type === 'note' && <button onClick={handleNativePrint} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" title="Drucken / PDF (Native)"><Printer size={16} /></button>}
                                         </>
                                     )}
@@ -1529,12 +1591,75 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                         ) : (
                             <div className="space-y-4">
                                 {selectedNote.type === 'pdf' && activeFileBlob ? (
-                                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                                        <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-2 bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                                            <button 
+                                                onClick={() => handleNativeShare('blob')} 
+                                                className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors font-medium text-sm border border-blue-200 flex-1"
+                                                title="PDF teilen"
+                                            >
+                                                <Share2 size={16} /> Teilen
+                                            </button>
+                                            {/* REPLACED DOWNLOAD WITH PRINT */}
+                                            <button 
+                                                onClick={() => {
+                                                    const url = URL.createObjectURL(activeFileBlob);
+                                                    const iframe = document.createElement('iframe');
+                                                    iframe.style.position = 'fixed';
+                                                    iframe.style.left = '0';
+                                                    iframe.style.top = '0';
+                                                    iframe.style.width = '0px';
+                                                    iframe.style.height = '0px';
+                                                    iframe.style.border = 'none';
+                                                    iframe.src = url;
+                                                    iframe.onload = () => {
+                                                        setTimeout(() => {
+                                                            iframe.contentWindow?.focus();
+                                                            iframe.contentWindow?.print();
+                                                        }, 100);
+                                                    };
+                                                    document.body.appendChild(iframe);
+                                                    setTimeout(() => {
+                                                        document.body.removeChild(iframe);
+                                                        URL.revokeObjectURL(url);
+                                                    }, 60000);
+                                                }} 
+                                                className="flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium text-sm border border-gray-200"
+                                                title="PDF Drucken"
+                                            >
+                                                <Printer size={16} />
+                                            </button>
+                                        </div>
+                                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                            <PdfViewer blob={activeFileBlob} searchQuery={searchQuery} isLensEnabled={isLensEnabled} />
+                                        </div>
                                     </div>
                                 ) : selectedNote.type === 'image' && activeFileBlob ? (
-                                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                                        <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
+                                    <div className="space-y-3">
+                                        <div className="flex items-center gap-2 bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                                            <button 
+                                                onClick={() => handleNativeShare('blob')} 
+                                                className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors font-medium text-sm border border-blue-200 flex-1"
+                                                title="Bild teilen"
+                                            >
+                                                <Share2 size={16} /> Teilen
+                                            </button>
+                                            <button 
+                                                onClick={() => {
+                                                    const link = document.createElement('a');
+                                                    link.href = URL.createObjectURL(activeFileBlob);
+                                                    link.download = selectedNote.fileName || `image_${selectedNote.id}.png`;
+                                                    link.click();
+                                                }} 
+                                                className="flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium text-sm border border-gray-200"
+                                                title="Bild herunterladen"
+                                            >
+                                                <Download size={16} />
+                                            </button>
+                                        </div>
+                                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                            <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
@@ -1593,7 +1718,41 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           <div className="fixed inset-0 z-[5000] bg-white flex flex-col animate-in zoom-in-95 duration-200">
               <div className="p-4 border-b flex justify-between items-center bg-gray-50">
                   <h3 className="font-bold text-gray-700 truncate max-w-lg">{selectedNote?.title}</h3>
-                  <button onClick={() => setIsMaximized(false)} className="p-2 hover:bg-gray-200 rounded-full bg-white shadow-sm transition-all"><Minimize2 size={24} /></button>
+                  <div className="flex items-center gap-2">
+                      <button onClick={() => handleNativeShare('blob')} className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors font-medium text-sm border border-blue-200" title="Datei teilen"><Share2 size={16} /> Teilen</button>
+                      
+                      {/* REPLACED DOWNLOAD WITH PRINT IN OVERLAY */}
+                      <button 
+                          onClick={() => {
+                              const url = URL.createObjectURL(activeFileBlob);
+                              const iframe = document.createElement('iframe');
+                              iframe.style.position = 'fixed';
+                              iframe.style.left = '0';
+                              iframe.style.top = '0';
+                              iframe.style.width = '0px';
+                              iframe.style.height = '0px';
+                              iframe.style.border = 'none';
+                              iframe.src = url;
+                              iframe.onload = () => {
+                                  setTimeout(() => {
+                                      iframe.contentWindow?.focus();
+                                      iframe.contentWindow?.print();
+                                  }, 100);
+                              };
+                              document.body.appendChild(iframe);
+                              setTimeout(() => {
+                                  document.body.removeChild(iframe);
+                                  URL.revokeObjectURL(url);
+                              }, 60000);
+                          }} 
+                          className="flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium text-sm border border-gray-200" 
+                          title="Datei Drucken"
+                      >
+                          <Printer size={16} />
+                      </button>
+                      
+                      <button onClick={() => setIsMaximized(false)} className="p-2 hover:bg-gray-200 rounded-full bg-white shadow-sm transition-all ml-2"><Minimize2 size={24} /></button>
+                  </div>
               </div>
               <div className="flex-1 overflow-auto bg-gray-100 p-4 flex justify-center">
                   <div className="w-full max-w-5xl bg-white shadow-2xl min-h-full">
