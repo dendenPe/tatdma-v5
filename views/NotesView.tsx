@@ -753,12 +753,22 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   // Filter notes for linking modal
   const filteredLinkNotes = useMemo(() => {
       if (!linkSearchQuery) return [];
-      const term = linkSearchQuery.toLowerCase();
-      return notesList.filter(n => 
-          n.id !== selectedNoteId && 
-          !selectedNote?.linkedNoteIds?.includes(n.id) &&
-          (n.title.toLowerCase().includes(term) || (n.content && stripHtml(n.content).toLowerCase().includes(term)))
-      ).slice(0, 10); // Limit results
+      
+      const { mode, terms } = parseSearchQuery(linkSearchQuery);
+      if (terms.length === 0) return [];
+
+      return notesList.filter(n => {
+          // Skip self and already linked
+          if (n.id === selectedNoteId || selectedNote?.linkedNoteIds?.includes(n.id)) return false;
+
+          const cleanContent = (n.title + " " + (n.content ? stripHtml(n.content) : "")).toLowerCase();
+          
+          if (mode === 'AND') {
+              return terms.every(term => cleanContent.includes(term));
+          } else {
+              return terms.some(term => cleanContent.includes(term));
+          }
+      }).slice(0, 10); // Limit results
   }, [notesList, linkSearchQuery, selectedNoteId, selectedNote]);
 
 
@@ -1734,7 +1744,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       {/* 2. MIDDLE COLUMN */}
       <div 
         className={`flex flex-col min-h-0 bg-white shrink-0 border-r border-gray-100 ${isResizing ? '' : 'transition-all duration-300'} ${(isEditMode || !selectedNoteId) ? 'flex' : 'hidden md:flex'}`}
-        style={{ width: windowWidth >= 768 ? (isEditMode ? `${editorRatio}%` : layout.listW) : '100%' }}
+        style={{ width: windowWidth >= 768 ? (isEditMode ? '65%' : layout.listW) : '100%' }}
       >
          {!isEditMode ? (
              <>
@@ -2423,7 +2433,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                       <input 
                           id="link-search-input"
                           type="text" 
-                          placeholder="Notiz suchen..." 
+                          placeholder="Notiz suchen (z.B. merck;april)..." 
                           value={linkSearchQuery} 
                           onChange={(e) => setLinkSearchQuery(e.target.value)} 
                           className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-100 transition-all"
