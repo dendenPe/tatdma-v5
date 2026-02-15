@@ -72,7 +72,10 @@ import {
   CheckCircle2,
   Circle,
   Package,
-  LayoutGrid
+  LayoutGrid,
+  Link as LinkIcon,
+  Unlink,
+  AlertCircle
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -179,55 +182,90 @@ const parseSearchQuery = (query: string): { mode: 'AND' | 'OR', terms: string[] 
     return { mode: 'AND', terms: raw.split(/\s+/).filter(t => t.trim().length > 0) };
 };
 
+// Helper: Fetch Blob from DB or Vault
+const fetchBlobWithFallback = async (fileId: string, filePath?: string): Promise<Blob | null> => {
+    // 1. Try DB (Fastest, Local)
+    let blob = await DBService.getFile(fileId);
+    if (blob) return blob;
+
+    // 2. Try Vault (If Path provided)
+    if (filePath && VaultService.isConnected()) {
+        blob = await DocumentService.getFileFromVault(filePath);
+        if (blob) return blob;
+    }
+
+    return null;
+};
+
 interface PdfThumbnailProps { 
     fileId: string; 
+    filePath?: string; 
     onClick: () => void; 
     onRemove?: () => void;
     isSelected?: boolean;
     onToggleSelect?: () => void;
+    isLinked?: boolean;
+    sourceTitle?: string;
 }
 
-const PdfThumbnail = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }: PdfThumbnailProps) => {
+const PdfThumbnail = ({ fileId, filePath, onClick, onRemove, isSelected, onToggleSelect, isLinked, sourceTitle }: PdfThumbnailProps) => {
     const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+    const [error, setError] = useState(false);
 
     useEffect(() => {
+        let isMounted = true;
         const loadThumb = async () => {
-            const blob = await DBService.getFile(fileId);
-            if (blob) {
-                try {
-                    const buffer = await blob.arrayBuffer();
-                    const loadingTask = pdfjsLib.getDocument(buffer);
-                    const pdf = await loadingTask.promise;
-                    const page = await pdf.getPage(1);
-                    const viewport = page.getViewport({ scale: 0.3 });
-                    const canvas = document.createElement('canvas');
-                    const context = canvas.getContext('2d');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-                    if(context) {
-                        // @ts-ignore
-                        await page.render({ canvasContext: context, viewport } as any).promise;
-                        setThumbUrl(canvas.toDataURL());
+            try {
+                const blob = await fetchBlobWithFallback(fileId, filePath);
+                
+                if (blob && isMounted) {
+                    if (blob.type === 'application/pdf') {
+                        const buffer = await blob.arrayBuffer();
+                        const loadingTask = pdfjsLib.getDocument(buffer);
+                        const pdf = await loadingTask.promise;
+                        const page = await pdf.getPage(1);
+                        const viewport = page.getViewport({ scale: 0.3 });
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        if(context) {
+                            // @ts-ignore
+                            await page.render({ canvasContext: context, viewport } as any).promise;
+                            if(isMounted) setThumbUrl(canvas.toDataURL());
+                        }
+                    } else if (blob.type.startsWith('image/')) {
+                        if(isMounted) setThumbUrl(URL.createObjectURL(blob));
                     }
-                } catch (e) {
-                    console.error("Thumb error", e);
+                } else {
+                    if(isMounted) setError(true);
                 }
+            } catch (e) {
+                console.error("Thumb error", e);
+                if(isMounted) setError(true);
             }
         };
         loadThumb();
-    }, [fileId]);
+        return () => { isMounted = false; };
+    }, [fileId, filePath]);
 
     return (
         <div className={`relative group bg-gray-100 rounded-lg p-2 border transition-all cursor-pointer ${isSelected ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
             <div onClick={onClick} className="flex flex-col items-center relative">
                 {thumbUrl ? (
-                    <img src={thumbUrl} className="w-full h-auto rounded shadow-sm mb-2" alt="PDF Page 1" />
+                    <img src={thumbUrl} className="w-full h-auto rounded shadow-sm mb-2 object-cover aspect-[3/4]" alt="Preview" />
+                ) : error ? (
+                    <div className="w-full aspect-[3/4] flex flex-col items-center justify-center bg-gray-200 rounded mb-2 text-red-400">
+                        <AlertCircle size={20} />
+                        <span className="text-[9px] mt-1">Fehler</span>
+                    </div>
                 ) : (
                     <div className="w-full aspect-[3/4] flex items-center justify-center bg-gray-200 rounded mb-2">
                         <Loader2 size={16} className="animate-spin text-gray-400" />
                     </div>
                 )}
-                <span className="text-[10px] text-gray-500 font-mono truncate w-full text-center">PDF Anhang</span>
+                <span className="text-[10px] text-gray-500 font-mono truncate w-full text-center">Anhang</span>
+                {sourceTitle && <span className="text-[9px] text-purple-500 font-bold truncate w-full text-center">Via: {sourceTitle}</span>}
             </div>
             
             {onToggleSelect && (
@@ -239,7 +277,13 @@ const PdfThumbnail = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }:
                 </button>
             )}
 
-            {onRemove && (
+            {isLinked && (
+                <div className="absolute top-2 right-2 bg-purple-500 text-white rounded-full p-1 shadow-md z-10" title={sourceTitle ? `Verknüpft: ${sourceTitle}` : "Verknüpft"}>
+                    <LinkIcon size={12} />
+                </div>
+            )}
+
+            {onRemove && !isLinked && (
                 <button 
                     onClick={(e) => { e.stopPropagation(); onRemove(); }} 
                     className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-20"
@@ -251,19 +295,26 @@ const PdfThumbnail = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }:
     );
 };
 
-const PdfListItem = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }: PdfThumbnailProps) => {
+const PdfListItem = ({ fileId, filePath, onClick, onRemove, isSelected, onToggleSelect, isLinked, sourceTitle }: PdfThumbnailProps) => {
     const [fileName, setFileName] = useState<string>("Lade...");
     const [fileSize, setFileSize] = useState<string>("");
+    const [isError, setIsError] = useState(false);
 
     useEffect(() => {
-        DBService.getFile(fileId).then(blob => {
+        let isMounted = true;
+        fetchBlobWithFallback(fileId, filePath).then(blob => {
+            if (!isMounted) return;
             if(blob) {
                 if (blob instanceof File) setFileName(blob.name);
-                else setFileName(`Anhang_${fileId.substring(0,5)}.pdf`);
+                else setFileName(`Anhang_${fileId.substring(0,5)}`);
                 setFileSize(`${(blob.size / 1024).toFixed(0)} KB`);
+            } else {
+                setFileName("Nicht gefunden");
+                setIsError(true);
             }
         });
-    }, [fileId]);
+        return () => { isMounted = false; };
+    }, [fileId, filePath]);
 
     return (
         <div 
@@ -281,18 +332,20 @@ const PdfListItem = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }: 
             )}
             
             {/* Icon */}
-            <div className="p-2.5 bg-red-50 text-red-500 rounded-lg shrink-0 border border-red-100">
-                <FileText size={20} />
+            <div className={`p-2.5 rounded-lg shrink-0 border ${isLinked ? 'bg-purple-50 text-purple-500 border-purple-100' : isError ? 'bg-red-50 text-red-500 border-red-100' : 'bg-gray-50 text-gray-500 border-gray-100'}`}>
+                {isLinked ? <LinkIcon size={20} /> : isError ? <AlertCircle size={20} /> : <FileText size={20} />}
             </div>
 
             {/* Meta */}
             <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-gray-700 truncate" title={fileName}>{fileName}</div>
-                <div className="text-[10px] text-gray-400 font-mono uppercase">{fileSize} • PDF</div>
+                <div className={`text-sm font-bold truncate ${isError ? 'text-red-400' : 'text-gray-700'}`} title={fileName}>{fileName}</div>
+                <div className="text-[10px] text-gray-400 font-mono uppercase">
+                    {fileSize} {sourceTitle ? <span className="text-purple-500">• {sourceTitle}</span> : ''}
+                </div>
             </div>
 
             {/* Remove */}
-            {onRemove && (
+            {onRemove && !isLinked && (
                 <button 
                     onClick={(e) => { e.stopPropagation(); onRemove(); }}
                     className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
@@ -451,6 +504,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [shareModalData, setShareModalData] = useState<{url: string, filename: string} | null>(null);
   const [editorRatio, setEditorRatio] = useState(65);
   
+  // Link Modal State
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [linkSearchQuery, setLinkSearchQuery] = useState('');
+
   // Table Modal State
   const [tableModal, setTableModal] = useState<{open: boolean, rows: number, cols: number}>({ open: false, rows: 3, cols: 3 });
   
@@ -605,6 +662,105 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       const updatedNote = { ...data.notes[selectedNoteId], ...updates };
       onUpdate({ ...data, notes: { ...data.notes, [selectedNoteId]: updatedNote } });
   };
+
+  // --- AGGREGATED ATTACHMENTS FOR SELECTED NOTE ---
+  // Combines own attachments with attachments from linked notes
+  // FIX: Also includes main file of linked notes if applicable, AND passes filePath for resolving
+  const combinedAttachments = useMemo(() => {
+      if (!selectedNote) return [];
+      
+      const ownAttachments = (selectedNote.attachments || []).map(id => ({
+          id, 
+          filePath: undefined, // Local attachments usually don't have filePaths yet
+          isLinked: false,
+          sourceNoteTitle: null,
+          sourceNoteId: null
+      }));
+
+      const linkedAttachments = (selectedNote.linkedNoteIds || []).flatMap(linkedId => {
+          const linkedNote = data.notes[linkedId];
+          if (!linkedNote) return [];
+          
+          const results = [];
+          
+          // 1. Linked Note IS a file? (Main File)
+          if (linkedNote.type === 'pdf' || linkedNote.type === 'image' || linkedNote.type === 'word' || linkedNote.type === 'excel') {
+              results.push({
+                  id: linkedNote.id,
+                  filePath: linkedNote.filePath, // Pass the path for Vault retrieval
+                  isLinked: true,
+                  sourceNoteTitle: linkedNote.title,
+                  sourceNoteId: linkedId
+              });
+          }
+          
+          // 2. Linked Note HAS attachments?
+          if (linkedNote.attachments && linkedNote.attachments.length > 0) {
+              results.push(...linkedNote.attachments.map(id => ({
+                  id,
+                  filePath: undefined, // Secondary attachments don't track paths in the note object easily
+                  isLinked: true,
+                  sourceNoteTitle: linkedNote.title,
+                  sourceNoteId: linkedId
+              })));
+          }
+          
+          return results;
+      });
+
+      const seen = new Set();
+      const combined = [];
+      for (const item of [...ownAttachments, ...linkedAttachments]) {
+          if (!seen.has(item.id)) {
+              seen.add(item.id);
+              combined.push(item);
+          }
+      }
+      return combined;
+  }, [selectedNote, data.notes]);
+
+  // --- AUTO CLEANUP SELECTED IDS ---
+  // If an attachment is removed from the note (and thus from combinedAttachments), 
+  // it must also be removed from selectedAttachmentIds to prevent "ghost" zipping.
+  useEffect(() => {
+      const validIds = new Set(combinedAttachments.map(a => a.id));
+      setSelectedAttachmentIds(prev => {
+          const next = new Set<string>();
+          prev.forEach(id => {
+              if (validIds.has(id)) next.add(id);
+          });
+          return next;
+      });
+  }, [combinedAttachments]);
+
+  // --- LINKING LOGIC ---
+  const linkNote = (targetId: string) => {
+      if (!selectedNoteId) return;
+      const currentLinks = data.notes[selectedNoteId].linkedNoteIds || [];
+      if (!currentLinks.includes(targetId) && targetId !== selectedNoteId) {
+          updateSelectedNote({ linkedNoteIds: [...currentLinks, targetId] });
+      }
+      setIsLinkModalOpen(false);
+      setLinkSearchQuery('');
+  };
+
+  const unlinkNote = (targetId: string) => {
+      if (!selectedNoteId) return;
+      const currentLinks = data.notes[selectedNoteId].linkedNoteIds || [];
+      updateSelectedNote({ linkedNoteIds: currentLinks.filter(id => id !== targetId) });
+  };
+
+  // Filter notes for linking modal
+  const filteredLinkNotes = useMemo(() => {
+      if (!linkSearchQuery) return [];
+      const term = linkSearchQuery.toLowerCase();
+      return notesList.filter(n => 
+          n.id !== selectedNoteId && 
+          !selectedNote?.linkedNoteIds?.includes(n.id) &&
+          (n.title.toLowerCase().includes(term) || (n.content && stripHtml(n.content).toLowerCase().includes(term)))
+      ).slice(0, 10); // Limit results
+  }, [notesList, linkSearchQuery, selectedNoteId, selectedNote]);
+
 
   // --- CRITICAL FIX FOR STALE CLOSURE IN TIPTAP ---
   // We use a ref to hold the latest update function and ID
@@ -999,133 +1155,116 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const handleNativeShare = async (forceType?: 'blob' | 'html') => {
       if (!selectedNote) return;
 
-      // Check if we have multiple attachments selected
+      // 1. MULTI-SELECT SHARE (Complex)
       if (selectedAttachmentIds.size > 0 && selectedNote.type === 'note') {
-          // COMPOSITE SHARE: NOTE PDF + SELECTED PDFS
           try {
               const files: File[] = [];
               
-              // 1. Generate Note PDF
+              // Note PDF
               const noteBlob = await generateNotePdfBlob();
               if (noteBlob) {
-                  // Relaxed sanitization: Only block filesystem illegal chars
                   const safeTitle = selectedNote.title.replace(/[\/\\:*?"<>|]/g, '_').trim() || 'Notiz';
                   files.push(new File([noteBlob], `${safeTitle}.pdf`, { type: 'application/pdf' }));
               }
 
-              // 2. Fetch Selected Attachments
-                let attachmentIndex = 1;
-                for (const id of selectedAttachmentIds) {
-                    const blob = await DBService.getFile(id);
-                    if (blob) {
-                        // Determine extension
-                        let ext = 'pdf';
-                        if (blob.type.includes('image')) ext = 'jpg';
-                        else if (blob.type.includes('png')) ext = 'png';
-                        
-                        // Get original filename if available
-                        let originalName = '';
-                        if (blob instanceof File && blob.name) {
-                            originalName = blob.name.replace(/\.[^/.]+$/, ""); // remove extension
-                        }
-                        
-                        // Create filename with original name if available
-                        let filename;
-                        if (originalName) {
-                            // Sanitize original name
-                            const safeOriginal = originalName.replace(/[^a-z0-9äöüß \-\.]/gi, '_');
-                            filename = `Anhang_${attachmentIndex}_${safeOriginal}.${ext}`;
-                        } else {
-                            filename = `Anhang_${attachmentIndex}.${ext}`;
-                        }
-                        
-                        files.push(new File([blob], filename, { type: blob.type }));
-                        attachmentIndex++;
-                    }
-                }
+              // Attachments
+              let attachmentIndex = 1;
+              for (const id of selectedAttachmentIds) {
+                  // Fetch blob
+                  // Look up correct path if available via combinedAttachments logic
+                  const meta = combinedAttachments.find(a => a.id === id);
+                  const path = meta?.filePath || data.notes[id]?.filePath;
+                  
+                  let blob = await fetchBlobWithFallback(id, path);
+                  
+                  if (blob) {
+                      // Determine ext/type
+                      let type = blob.type;
+                      if(!type || type === 'application/octet-stream') type = 'application/pdf'; 
+                      
+                      let ext = 'pdf';
+                      if (type.includes('image')) { 
+                          if(type.includes('png')) { ext = 'png'; type = 'image/png'; }
+                          else { ext = 'jpg'; type = 'image/jpeg'; }
+                      }
+                      
+                      // Filename
+                      let filename = `Anhang_${attachmentIndex}.${ext}`;
+                      if (blob instanceof File && blob.name) {
+                          const originalName = blob.name.replace(/\.[^/.]+$/, "");
+                          const safeOriginal = originalName.replace(/[^a-z0-9._-]/gi, '_');
+                          filename = `Anhang_${attachmentIndex}_${safeOriginal}.${ext}`;
+                      }
+                      
+                      files.push(new File([blob], filename, { type }));
+                      attachmentIndex++;
+                  }
+              }
 
               if (files.length > 0 && navigator.canShare && navigator.canShare({ files })) {
                   await navigator.share({
                       files,
                       title: selectedNote.title,
-                      text: `Notiz: ${selectedNote.title} mit ${files.length-1} Anhängen`
+                      text: `Notiz mit ${files.length - 1} Anhängen`
                   });
               } else {
-                  // Fallback: If can't share multiple, alert user to try ZIP
-                  alert("Dein Browser unterstützt das Teilen mehrerer Dateien nicht direkt. Bitte nutze den ZIP Button.");
+                  // Fallback to ZIP if native share fails or not supported for multiple
+                  await handleZipSelected(); // Use the ZIP function as fallback
               }
+
           } catch (e: any) {
-              console.error("Composite share failed", e);
-              if (e.name !== 'AbortError') alert("Fehler beim Teilen.");
+              console.error("Share Error", e);
+              // Fallback to ZIP
+              await handleZipSelected();
           }
           return;
       }
 
-      // Determine effective mode based on explicit request OR context
-      // If we are in 'blob' mode or asking for blob, prioritize activeFileBlob
+      // 2. SINGLE ITEM SHARE
       const useBlob = forceType === 'blob' || (!forceType && activeFileBlob);
-      const effectiveMode = forceType || (selectedNote.type === 'note' ? 'html' : 'blob');
-
-      // CASE 1: Attachment (PDF/Image) - Share Blob
-      if (effectiveMode === 'blob' && activeFileBlob) {
+      
+      // A) ATTACHMENT (Image/PDF)
+      if (useBlob && activeFileBlob) {
           try {
-              let fileName = selectedNote.fileName || `doc_${selectedNote.id}`;
-              const mimeType = activeFileBlob.type || 'application/pdf';
+              let fileName = (selectedNote.fileName || 'document.pdf').replace(/[^a-z0-9._-]/gi, '_');
+              // Ensure correct extension
+              if(activeFileBlob.type === 'application/pdf' && !fileName.endsWith('.pdf')) fileName += '.pdf';
+              if(activeFileBlob.type.includes('image') && !fileName.match(/\.(jpg|jpeg|png)$/)) fileName += '.jpg';
+
+              const file = new File([activeFileBlob], fileName, { type: activeFileBlob.type || 'application/pdf' });
               
-              // Force correct extension based on MIME type to prevent sharing as .txt
-              if (mimeType === 'application/pdf' && !fileName.toLowerCase().endsWith('.pdf')) {
-                  fileName = fileName.replace(/\.[^/.]+$/, "") + ".pdf"; 
-                  if (!fileName.endsWith('.pdf')) fileName += ".pdf"; // Double check
-              } else if (mimeType.startsWith('image/') && !fileName.match(/\.(jpg|jpeg|png|webp)$/i)) {
-                   fileName += ".jpg";
-              }
-
-              const file = new File([activeFileBlob], fileName, { type: mimeType });
-
               if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                  await navigator.share({
-                      files: [file],
-                      title: selectedNote.title || 'Dokument',
-                      text: selectedNote.title
-                  });
+                  await navigator.share({ files: [file], title: selectedNote.title });
               } else {
+                  // Modal Fallback
                   const url = URL.createObjectURL(activeFileBlob);
                   setShareModalData({ url, filename: fileName });
               }
-          } catch (e: any) {
-              if (e.name !== 'AbortError') {
-                  console.error("Share failed", e);
-                  const url = URL.createObjectURL(activeFileBlob);
-                  setShareModalData({ url, filename: selectedNote.fileName || 'doc.pdf' });
-              }
+          } catch (e) {
+              console.error("Single Share Error", e);
+              const url = URL.createObjectURL(activeFileBlob);
+              setShareModalData({ url, filename: 'document.pdf' });
           }
           return;
       }
 
-      // CASE 2: Text Note -> GENERATE PDF via html2pdf (Screenshots the DOM for perfect fidelity)
-      if (effectiveMode === 'html' && selectedNote.type === 'note') {
+      // B) NOTE CONTENT (HTML -> PDF)
+      if ((forceType === 'html' || !useBlob) && selectedNote.type === 'note') {
           try {
               const pdfBlob = await generateNotePdfBlob();
-              if (!pdfBlob) throw new Error("PDF Gen failed");
-              
-              const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
-              const fileName = `${safeTitle}.pdf`;
-              const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
-
-              if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                  await navigator.share({
-                      files: [file],
-                      title: selectedNote.title
-                  });
-              } else {
-                  // Fallback for Desktop
-                  const url = URL.createObjectURL(pdfBlob);
-                  setShareModalData({ url, filename: fileName });
+              if (pdfBlob) {
+                  const fileName = `${selectedNote.title.replace(/[^a-z0-9]/gi, '_')}.pdf`;
+                  const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+                  
+                  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                      await navigator.share({ files: [file], title: selectedNote.title });
+                  } else {
+                      const url = URL.createObjectURL(pdfBlob);
+                      setShareModalData({ url, filename: fileName });
+                  }
               }
-
-          } catch (e: any) {
-              console.error("Share note failed", e);
-              alert("Fehler beim Erstellen des PDFs. (html2pdf)");
+          } catch (e) {
+              alert("Fehler beim PDF Generieren.");
           }
       }
   };
@@ -1135,41 +1274,63 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       try {
           const zip = new JSZip();
           // Relaxed sanitization for ZIP filename to allow spaces and readable names
-          const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß \-\.]/gi, '_').trim() || 'Notiz';
+          const safeTitle = selectedNote.title.replace(/[^a-z0-9\-\.]/gi, '_').trim() || 'Notiz';
           
           // 1. Add Note PDF (Always included for context)
           const noteBlob = await generateNotePdfBlob();
           if (noteBlob) zip.file(`${safeTitle}.pdf`, noteBlob);
 
-          // 2. Add Selected Attachments
+          // 2. Add Selected Attachments (using aggregated list)
           let attachmentCounter = 0;
           for (const id of selectedAttachmentIds) {
-              let blob = await DBService.getFile(id);
               
-              // Fallback to Vault if not in DB (Desktop use case)
-              if (!blob && selectedNote.attachments && selectedNote.attachments.includes(id) && VaultService.isConnected()) {
-                  // Currently we don't have a direct map of ID -> Vault Path for attachments in the data model
-              }
+              // FIXED: ROBUST FETCHING FOR ZIP
+              const meta = combinedAttachments.find(a => a.id === id);
+              const path = meta?.filePath || data.notes[id]?.filePath;
+              let blob = await fetchBlobWithFallback(id, path);
 
               if (blob) {
                   attachmentCounter++;
-                  // Determine extension based on MIME type if unknown
-                  let ext = 'bin';
-                  if (blob.type === 'application/pdf') ext = 'pdf';
-                  else if (blob.type.includes('jpeg') || blob.type.includes('jpg')) ext = 'jpg';
-                  else if (blob.type.includes('png')) ext = 'png';
                   
-                  // Construct Filename
+                  // 1. Recover Metadata
                   let originalName = '';
-                  // Check if blob is a File instance to get the name
+                  let originalExt = '';
+
+                  // A. From File Object
                   if (blob instanceof File && blob.name) {
-                      originalName = blob.name.replace(/\.[^/.]+$/, ""); // remove extension
+                      originalName = blob.name;
+                  } 
+                  // B. From Note Data (if linked note)
+                  else if (data.notes[id]) {
+                      originalName = data.notes[id].fileName || data.notes[id].title;
                   }
                   
+                  if (originalName) {
+                      const parts = originalName.split('.');
+                      if (parts.length > 1) originalExt = parts.pop()?.toLowerCase() || '';
+                      // Strip extension from name for construction
+                      originalName = originalName.replace(/\.[^/.]+$/, ""); 
+                  }
+
+                  // 2. Determine Extension (Type vs Name)
+                  let ext = 'bin';
+                  if (blob.type === 'application/pdf') {
+                      ext = 'pdf';
+                  } else if (blob.type.includes('jpeg') || blob.type.includes('jpg')) {
+                      ext = 'jpg';
+                  } else if (blob.type.includes('png')) {
+                      ext = 'png';
+                  } else if (originalExt) {
+                      // Fallback to filename extension
+                      if (['pdf', 'jpg', 'jpeg', 'png', 'txt'].includes(originalExt)) {
+                          ext = originalExt;
+                      }
+                  }
+                  
+                  // 3. Construct Final Filename
                   let fileName;
                   if (originalName) {
-                      // Sanitize original name
-                      const safeOriginal = originalName.replace(/[^a-z0-9äöüß \-\.]/gi, '_');
+                      const safeOriginal = originalName.replace(/[^a-z0-9\-\.]/gi, '_');
                       fileName = `Anhang_${attachmentCounter}_${safeOriginal}.${ext}`;
                   } else {
                       fileName = `Anhang_${attachmentCounter}.${ext}`;
@@ -1530,7 +1691,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       
       {/* 1. SIDEBAR */}
       <div 
-        className={`bg-gray-50 border-r border-gray-100 flex-col shrink-0 hidden ${!isEditMode ? 'md:flex' : ''}`}
+        className={`bg-gray-50 border-r border-gray-100 flex-col shrink-0 hidden ${isEditMode ? '' : 'md:flex'}`}
         style={{ width: windowWidth >= 768 ? (isEditMode ? 0 : layout.sidebarW) : '100%' }}
       >
          <div className="p-4 space-y-2">
@@ -1761,7 +1922,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       {/* NEW DRAG HANDLE (Editor resize) */}
       {isEditMode && windowWidth >= 768 && (
         <div 
-            className="w-1 hover:w-2 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-all z-10 hidden md:block" 
+            className="w-2 hover:w-3 bg-gray-300 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-all z-50 hidden md:block shadow-[0_0_5px_rgba(0,0,0,0.1)]" 
             onMouseDown={startResizing('editor')}
             title="Ziehen zum Anpassen der Breite"
         />
@@ -1777,29 +1938,81 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                              <h3 className="font-bold text-gray-700 text-sm">Anhänge verwalten</h3>
                              <p className="text-[10px] text-gray-400">PDFs hierher ziehen</p>
                          </div>
-                         <div className="flex bg-gray-100 rounded-lg p-0.5">
+                         <div className="flex gap-1">
+                             {/* LINK NOTE BUTTON */}
                              <button 
-                                 onClick={() => setAttachmentViewMode('grid')}
-                                 className={`p-1.5 rounded-md ${attachmentViewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                                 onClick={() => { setIsLinkModalOpen(true); setTimeout(() => document.getElementById('link-search-input')?.focus(), 100); }} 
+                                 className="p-1.5 bg-purple-50 text-purple-600 rounded-md hover:bg-purple-100 transition-colors border border-purple-100"
+                                 title="Notiz verknüpfen"
                              >
-                                 <LayoutGrid size={14} />
+                                 <LinkIcon size={14} />
                              </button>
-                             <button 
-                                 onClick={() => setAttachmentViewMode('list')}
-                                 className={`p-1.5 rounded-md ${attachmentViewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
-                             >
-                                 <List size={14} />
-                             </button>
+                             <div className="flex bg-gray-100 rounded-lg p-0.5">
+                                 <button 
+                                     onClick={() => setAttachmentViewMode('grid')}
+                                     className={`p-1.5 rounded-md ${attachmentViewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                                 >
+                                     <LayoutGrid size={14} />
+                                 </button>
+                                 <button 
+                                     onClick={() => setAttachmentViewMode('list')}
+                                     className={`p-1.5 rounded-md ${attachmentViewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                                 >
+                                     <List size={14} />
+                                 </button>
+                             </div>
                          </div>
                      </div>
-                     <div className="flex-1 overflow-y-auto p-4">
-                         {selectedNote.attachments && selectedNote.attachments.length > 0 ? (
+                     
+                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                         {/* LINKED SOURCES LIST (Management) */}
+                         {selectedNote.linkedNoteIds && selectedNote.linkedNoteIds.length > 0 && (
+                             <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
+                                 <h4 className="text-[10px] font-black text-purple-400 uppercase tracking-widest mb-2 flex items-center gap-1">
+                                     <LinkIcon size={10} /> Verknüpfte Quellen
+                                 </h4>
+                                 <div className="space-y-2">
+                                     {selectedNote.linkedNoteIds.map(linkId => {
+                                         const linkNote = data.notes[linkId];
+                                         if (!linkNote) return null;
+                                         return (
+                                             <div key={linkId} className="flex justify-between items-start text-xs bg-white p-2 rounded-lg border border-purple-100 shadow-sm">
+                                                 <div className="flex flex-col gap-0.5 flex-1 min-w-0 mr-2">
+                                                     <span className="font-bold text-gray-700 break-words leading-tight">{linkNote.title}</span>
+                                                     <span className="text-[9px] text-gray-400">{linkNote.category}</span>
+                                                 </div>
+                                                 <button onClick={() => unlinkNote(linkId)} className="text-gray-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-md transition-colors shrink-0 mt-0.5" title="Verknüpfung entfernen"><Unlink size={14}/></button>
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                             </div>
+                         )}
+
+                         {/* ALL ATTACHMENTS (Aggregated) */}
+                         {combinedAttachments.length > 0 ? (
                              <div className={attachmentViewMode === 'grid' ? "space-y-4" : "space-y-2"}>
-                                 {selectedNote.attachments.map(id => (
+                                 {combinedAttachments.map((att) => (
                                      attachmentViewMode === 'grid' ? (
-                                         <PdfThumbnail key={id} fileId={id} onClick={() => {}} onRemove={() => removeAttachment(id)} />
+                                         <PdfThumbnail 
+                                             key={`${att.isLinked ? 'linked_' : ''}${att.id}`} 
+                                             fileId={att.id} 
+                                             filePath={att.filePath} // PASS FILEPATH
+                                             onClick={() => {}} 
+                                             onRemove={att.isLinked ? undefined : () => removeAttachment(att.id)}
+                                             isLinked={att.isLinked}
+                                             sourceTitle={att.sourceNoteTitle || undefined}
+                                         />
                                      ) : (
-                                         <PdfListItem key={id} fileId={id} onClick={() => {}} onRemove={() => removeAttachment(id)} />
+                                         <PdfListItem 
+                                             key={`${att.isLinked ? 'linked_' : ''}${att.id}`} 
+                                             fileId={att.id} 
+                                             filePath={att.filePath} // PASS FILEPATH
+                                             onClick={() => {}} 
+                                             onRemove={att.isLinked ? undefined : () => removeAttachment(att.id)}
+                                             isLinked={att.isLinked}
+                                             sourceTitle={att.sourceNoteTitle || undefined}
+                                         />
                                      )
                                  ))}
                              </div>
@@ -1811,6 +2024,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
              ) : (
                  <>
                     <div className="px-4 py-3 border-b border-gray-100 bg-white shrink-0">
+                        {/* ... Existing Preview Header ... */}
                         <div className="flex flex-col gap-2">
                             <div className="flex items-center justify-between gap-3">
                                 <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1932,20 +2146,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                                 <Share2 size={16} /> Teilen
                                             </button>
                                             <button 
-                                                onClick={() => {
-                                                    const link = document.createElement('a');
-                                                    link.href = URL.createObjectURL(activeFileBlob);
-                                                    link.download = selectedNote.fileName || `image_${selectedNote.id}.png`;
-                                                    link.click();
-                                                }} 
+                                                onClick={() => setIsMaximized(true)} 
                                                 className="flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium text-sm border border-gray-200"
-                                                title="Bild herunterladen"
+                                                title="Vollbild"
                                             >
-                                                <Download size={16} />
+                                                <Maximize2 size={16} />
                                             </button>
                                         </div>
-                                        <div className="border border-gray-200 rounded-lg overflow-hidden">
-                                            <img src={URL.createObjectURL(activeFileBlob)} alt="Preview" className="w-full h-auto" />
+                                        <div className="border border-gray-200 rounded-lg overflow-hidden cursor-zoom-in" onClick={() => setIsMaximized(true)}>
+                                            <img src={URL.createObjectURL(activeFileBlob)} className="w-full h-auto" alt="Note Attachment" />
                                         </div>
                                     </div>
                                 ) : (
@@ -1965,7 +2174,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                 )}
                             </div>
                         )}
-                        {selectedNote.attachments && selectedNote.attachments.length > 0 && (
+                        {/* PREVIEW MODE ATTACHMENT GRID (Including linked) */}
+                        {combinedAttachments.length > 0 && (
                             <div className="border-t border-gray-200 pt-6">
                                 <div className="flex items-center justify-between mb-4">
                                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> PDF Anhänge</h4>
@@ -1990,10 +2200,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                         {selectedAttachmentIds.size === 0 && (
                                             <button 
                                                 onClick={() => {
-                                                    if (selectedNote.attachments) {
-                                                        const allIds = new Set(selectedNote.attachments);
-                                                        setSelectedAttachmentIds(allIds);
-                                                    }
+                                                    const allIds = new Set(combinedAttachments.map(a => a.id));
+                                                    setSelectedAttachmentIds(allIds);
                                                 }}
                                                 className="text-[10px] text-gray-400 hover:text-blue-500 font-bold mr-3"
                                             >
@@ -2018,22 +2226,28 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                     </div>
                                 </div>
                                 <div className={attachmentViewMode === 'grid' ? "grid grid-cols-2 md:grid-cols-3 gap-4" : "space-y-2"}>
-                                    {selectedNote.attachments.map(id => (
+                                    {combinedAttachments.map((att) => (
                                         attachmentViewMode === 'grid' ? (
                                             <PdfThumbnail 
-                                                key={id} 
-                                                fileId={id} 
-                                                onClick={async () => { const blob = await DBService.getFile(id); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
-                                                isSelected={selectedAttachmentIds.has(id)}
-                                                onToggleSelect={() => toggleAttachmentSelection(id)}
+                                                key={`${att.isLinked ? 'l' : 'o'}_${att.id}`} 
+                                                fileId={att.id} 
+                                                filePath={att.filePath} 
+                                                onClick={async () => { const blob = await fetchBlobWithFallback(att.id, att.filePath); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
+                                                isSelected={selectedAttachmentIds.has(att.id)}
+                                                onToggleSelect={() => toggleAttachmentSelection(att.id)}
+                                                isLinked={att.isLinked}
+                                                sourceTitle={att.sourceNoteTitle || undefined}
                                             />
                                         ) : (
                                             <PdfListItem 
-                                                key={id} 
-                                                fileId={id} 
-                                                onClick={async () => { const blob = await DBService.getFile(id); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
-                                                isSelected={selectedAttachmentIds.has(id)}
-                                                onToggleSelect={() => toggleAttachmentSelection(id)}
+                                                key={`${att.isLinked ? 'l' : 'o'}_${att.id}`} 
+                                                fileId={att.id} 
+                                                filePath={att.filePath} 
+                                                onClick={async () => { const blob = await fetchBlobWithFallback(att.id, att.filePath); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
+                                                isSelected={selectedAttachmentIds.has(att.id)}
+                                                onToggleSelect={() => toggleAttachmentSelection(att.id)}
+                                                isLinked={att.isLinked}
+                                                sourceTitle={att.sourceNoteTitle || undefined}
                                             />
                                         )
                                     ))}
@@ -2190,6 +2404,49 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                   <div className="max-h-60 overflow-y-auto space-y-1 py-2">
                       {(data.categoryRules?.[ruleModalCat] || []).map(keyword => (<div key={keyword} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg group"><span className="text-sm font-medium text-gray-700">{keyword}</span><button onClick={() => removeKeyword(keyword)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button></div>))}
                       {(!data.categoryRules?.[ruleModalCat] || data.categoryRules[ruleModalCat].length === 0) && (<div className="text-center py-4 text-xs text-gray-300 italic">Keine eigenen Stichwörter definiert.</div>)}
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* NEW: LINK NOTE MODAL */}
+      {isLinkModalOpen && (
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 max-w-full space-y-4 animate-in zoom-in-95 duration-200 flex flex-col max-h-[80vh]">
+                  <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+                      <div className="flex items-center gap-2"><LinkIcon size={18} className="text-purple-500" /><div><h3 className="font-bold text-gray-800">Notiz Verknüpfen</h3><p className="text-xs text-gray-400">Anhänge übernehmen</p></div></div>
+                      <button onClick={() => setIsLinkModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
+                  </div>
+                  
+                  <div className="relative">
+                      <Search size={14} className="absolute left-3 top-3 text-gray-400" />
+                      <input 
+                          id="link-search-input"
+                          type="text" 
+                          placeholder="Notiz suchen..." 
+                          value={linkSearchQuery} 
+                          onChange={(e) => setLinkSearchQuery(e.target.value)} 
+                          className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-100 transition-all"
+                      />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-1 py-1 min-h-[200px]">
+                      {filteredLinkNotes.length > 0 ? (
+                          filteredLinkNotes.map(note => (
+                              <div key={note.id} onClick={() => linkNote(note.id)} className="p-3 bg-gray-50 hover:bg-purple-50 border border-transparent hover:border-purple-100 rounded-xl cursor-pointer transition-all">
+                                  <div className="font-bold text-sm text-gray-700">{note.title}</div>
+                                  <div className="text-[10px] text-gray-400 flex gap-2 mt-1">
+                                      <span>{note.category}</span>
+                                      <span>•</span>
+                                      <span>{new Date(note.created).toLocaleDateString()}</span>
+                                  </div>
+                              </div>
+                          ))
+                      ) : (
+                          <div className="text-center py-8 text-gray-400 text-xs italic">
+                              {linkSearchQuery ? 'Keine passende Notiz gefunden.' : 'Suche nach Titel...'}
+                          </div>
+                      )}
                   </div>
               </div>
           </div>

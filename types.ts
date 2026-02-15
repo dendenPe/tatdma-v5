@@ -221,6 +221,7 @@ export interface NoteDocument {
   isExpense?: boolean; // NEW: Flag for Daily Expenses
   expenseId?: string; // NEW: ID of the linked ExpenseEntry
   attachments?: string[]; // NEW: Array of DB IDs for attachments (PDFs)
+  linkedNoteIds?: string[]; // NEW: References to other notes to show their attachments
 }
 
 // --- NEW IN v5b: DAILY EXPENSES ---
