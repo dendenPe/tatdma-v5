@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Search, 
@@ -434,7 +435,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [isAnalyzingTax, setIsAnalyzingTax] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
   const [layout, setLayout] = useState({ sidebarW: 280, listW: 320 });
-  const [isResizing, setIsResizing] = useState<null | 'sidebar' | 'list'>(null);
+  const [isResizing, setIsResizing] = useState<null | 'sidebar' | 'list' | 'editor'>(null);
   const resizeRef = useRef<{ startX: number, startSidebarW: number, startListW: number } | null>(null);
   const [activeFileBlob, setActiveFileBlob] = useState<Blob | null>(null);
   const [fileLoadError, setFileLoadError] = useState<string | null>(null);
@@ -448,6 +449,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
   const [tooltip, setTooltip] = useState<{x: number, y: number, title: string, content: string} | null>(null);
   const [shareModalData, setShareModalData] = useState<{url: string, filename: string} | null>(null);
+  const [editorRatio, setEditorRatio] = useState(65);
   
   // Table Modal State
   const [tableModal, setTableModal] = useState<{open: boolean, rows: number, cols: number}>({ open: false, rows: 3, cols: 3 });
@@ -465,6 +467,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   // NEW: Attachment View Mode State
   const [attachmentViewMode, setAttachmentViewMode] = useState<'grid' | 'list'>('grid');
 
+  const editorRef = useRef<HTMLDivElement>(null);
   const lastNoteIdRef = useRef<string | null>(null);
   const mobileImportInputRef = useRef<HTMLInputElement>(null);
   const zipImportInputRef = useRef<HTMLInputElement>(null);
@@ -494,7 +497,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       if (needsUpdate) onUpdate({ ...data, notes: newNotes });
   }, []);
 
-  const startResizing = (type: 'sidebar' | 'list') => (e: React.MouseEvent) => {
+  const startResizing = (type: 'sidebar' | 'list' | 'editor') => (e: React.MouseEvent) => {
       e.preventDefault();
       setIsResizing(type);
       resizeRef.current = { startX: e.clientX, startSidebarW: layout.sidebarW, startListW: layout.listW };
@@ -507,6 +510,10 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           setLayout(prev => ({ ...prev, sidebarW: Math.max(200, Math.min(400, resizeRef.current!.startSidebarW + delta)) }));
       } else if (isResizing === 'list') {
           setLayout(prev => ({ ...prev, listW: Math.max(250, Math.min(1000, resizeRef.current!.startListW + delta)) }));
+      } else if (isResizing === 'editor') {
+          // Calculate percentage based on window width
+          const newRatio = (e.clientX / window.innerWidth) * 100;
+          setEditorRatio(Math.max(30, Math.min(90, newRatio))); // Clamp between 30% and 90%
       }
   }, [isResizing]);
   const handleGlobalMouseUp = useCallback(() => { setIsResizing(null); resizeRef.current = null; document.body.style.cursor = ''; }, []);
@@ -1001,11 +1008,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
               // 1. Generate Note PDF
               const noteBlob = await generateNotePdfBlob();
               if (noteBlob) {
-                  const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
+                  // Relaxed sanitization: Only block filesystem illegal chars
+                  const safeTitle = selectedNote.title.replace(/[\/\\:*?"<>|]/g, '_').trim() || 'Notiz';
                   files.push(new File([noteBlob], `${safeTitle}.pdf`, { type: 'application/pdf' }));
               }
 
-              // 2. Fetch Selected Attachments with proper names
+              // 2. Fetch Selected Attachments
                 let attachmentIndex = 1;
                 for (const id of selectedAttachmentIds) {
                     const blob = await DBService.getFile(id);
@@ -1126,7 +1134,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       if (!selectedNote) return;
       try {
           const zip = new JSZip();
-          // Allow spaces and dashes in title for readability
+          // Relaxed sanitization for ZIP filename to allow spaces and readable names
           const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß \-\.]/gi, '_').trim() || 'Notiz';
           
           // 1. Add Note PDF (Always included for context)
@@ -1494,11 +1502,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
 
   const confirmInsertTable = () => {
       if (editor) {
-          editor.commands.insertTable({ 
+          editor.chain().focus().insertTable({ 
               rows: tableModal.rows, 
               cols: tableModal.cols, 
               withHeaderRow: true 
-          });
+          }).run();
       }
       setTableModal({ ...tableModal, open: false });
   };
@@ -1522,8 +1530,8 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       
       {/* 1. SIDEBAR */}
       <div 
-        className={`bg-gray-50 border-r border-gray-100 flex-col shrink-0 hidden md:flex`}
-        style={{ width: windowWidth >= 768 ? (isEditMode ? 240 : layout.sidebarW) : '100%' }}
+        className={`bg-gray-50 border-r border-gray-100 flex-col shrink-0 hidden ${!isEditMode ? 'md:flex' : ''}`}
+        style={{ width: windowWidth >= 768 ? (isEditMode ? 0 : layout.sidebarW) : '100%' }}
       >
          <div className="p-4 space-y-2">
             <button onClick={createNote} className="w-full py-3 bg-[#16325c] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg hover:bg-blue-800 transition-all">
@@ -1565,7 +1573,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       {/* 2. MIDDLE COLUMN */}
       <div 
         className={`flex flex-col min-h-0 bg-white shrink-0 border-r border-gray-100 ${isResizing ? '' : 'transition-all duration-300'} ${(isEditMode || !selectedNoteId) ? 'flex' : 'hidden md:flex'}`}
-        style={{ width: windowWidth >= 768 ? (isEditMode ? '60%' : layout.listW) : '100%' }}
+        style={{ width: windowWidth >= 768 ? (isEditMode ? `${editorRatio}%` : layout.listW) : '100%' }}
       >
          {!isEditMode ? (
              <>
@@ -1748,6 +1756,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       {/* DRAG HANDLE 2 */}
       {!isEditMode && selectedNoteId && windowWidth >= 768 && (
         <div className="w-1 hover:w-2 bg-gray-100 hover:bg-blue-300 cursor-col-resize flex-shrink-0 transition-all z-10 hidden md:block" onMouseDown={startResizing('list')} />
+      )}
+
+      {/* NEW DRAG HANDLE (Editor resize) */}
+      {isEditMode && windowWidth >= 768 && (
+        <div 
+            className="w-1 hover:w-2 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-all z-10 hidden md:block" 
+            onMouseDown={startResizing('editor')}
+            title="Ziehen zum Anpassen der Breite"
+        />
       )}
 
       {/* 3. RIGHT COLUMN */}
@@ -2043,13 +2060,15 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                   <p className="text-xs text-gray-500 mb-6 bg-gray-50 p-2 rounded-lg break-all font-mono">{shareModalData.filename}</p>
                   <div className="space-y-3">
                       <a 
-                            href={shareModalData.url} 
-                            download={shareModalData.filename}
-                            className="block w-full py-3 bg-[#16325c] text-white font-bold rounded-xl shadow-lg hover:bg-blue-800 transition-all active:scale-95 flex items-center justify-center gap-2" 
-                            onClick={() => setTimeout(closeShareModal, 1000)}
-                        >
-                            <Download size={18} /> Öffnen / Teilen
-                        </a>
+                          href={shareModalData.url} 
+                          download={shareModalData.filename}
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="block w-full py-3 bg-[#16325c] text-white font-bold rounded-xl shadow-lg hover:bg-blue-800 transition-all active:scale-95 flex items-center justify-center gap-2" 
+                          onClick={() => setTimeout(closeShareModal, 1000)}
+                      >
+                          <Download size={18} /> Öffnen / Teilen
+                      </a>
                       <p className="text-[10px] text-gray-400">Öffnet die Datei in einem neuen Tab. Nutze dort den Browser-Share-Button.</p>
                   </div>
               </div>
@@ -2108,8 +2127,58 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           </div>
       )}
 
+      {/* TABLE CREATION MODAL */}
+      {tableModal.open && (
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 max-w-full animate-in zoom-in-95 duration-200">
+                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                      <TableIcon size={18} className="text-blue-500" /> Tabelle einfügen
+                  </h3>
+                  <div className="space-y-4">
+                      <div>
+                          <label className="text-xs text-gray-500 block mb-1">Zeilen</label>
+                          <input 
+                              type="number" 
+                              min="1" 
+                              max="20" 
+                              value={tableModal.rows} 
+                              onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})}
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                      </div>
+                      <div>
+                          <label className="text-xs text-gray-500 block mb-1">Spalten</label>
+                          <input 
+                              type="number" 
+                              min="1" 
+                              max="20" 
+                              value={tableModal.cols} 
+                              onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})}
+                              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                          />
+                      </div>
+                  </div>
+                  <div className="flex gap-2 mt-6">
+                      <button 
+                          onClick={() => setTableModal({...tableModal, open: false})}
+                          className="flex-1 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                      >
+                          Abbrechen
+                      </button>
+                      <button 
+                          onClick={confirmInsertTable}
+                          className="flex-1 px-4 py-2 bg-[#16325c] text-white rounded-lg hover:bg-blue-800 transition-colors text-sm font-medium"
+                      >
+                          Einfügen
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODAL: MANAGE RULES */}
       {ruleModalCat && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+          <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200 p-4">
               <div className="bg-white rounded-2xl shadow-2xl p-6 w-96 max-w-full space-y-4 animate-in zoom-in-95 duration-200">
                   <div className="flex items-center justify-between border-b border-gray-100 pb-4">
                       <div className="flex items-center gap-2"><Tag size={18} className="text-blue-500" /><div><h3 className="font-bold text-gray-800">Stichwörter</h3><p className="text-xs text-gray-400">Für Kategorie: <span className="font-bold text-blue-600">{ruleModalCat}</span></p></div></div>
@@ -2126,55 +2195,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           </div>
       )}
 
-      {/* TABLE CREATION MODAL */}
-{tableModal.open && (
-    <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-        <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 max-w-full animate-in zoom-in-95 duration-200">
-            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <TableIcon size={18} className="text-blue-500" /> Tabelle einfügen
-            </h3>
-            <div className="space-y-4">
-                <div>
-                    <label className="text-xs text-gray-500 block mb-1">Zeilen</label>
-                    <input 
-                        type="number" 
-                        min="1" 
-                        max="20" 
-                        value={tableModal.rows} 
-                        onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})}
-                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                    />
-                </div>
-                <div>
-                    <label className="text-xs text-gray-500 block mb-1">Spalten</label>
-                    <input 
-                        type="number" 
-                        min="1" 
-                        max="20" 
-                        value={tableModal.cols} 
-                        onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})}
-                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
-                    />
-                </div>
-            </div>
-            <div className="flex gap-2 mt-6">
-                <button 
-                    onClick={() => setTableModal({...tableModal, open: false})}
-                    className="flex-1 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
-                >
-                    Abbrechen
-                </button>
-                <button 
-                    onClick={confirmInsertTable}
-                    className="flex-1 px-4 py-2 bg-[#16325c] text-white rounded-lg hover:bg-blue-800 transition-colors text-sm font-medium"
-                >
-                    Einfügen
-                </button>
-            </div>
-        </div>
-    </div>
-)}
-
+      {/* NEW: FLOATING TOOLTIP RENDERER (FIXED & COMPACT) */}
       {tooltip && (
           <div 
               className="fixed z-[9999] w-48 bg-black/90 backdrop-blur-md text-white text-[9px] leading-tight p-2.5 rounded-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150 pointer-events-none border border-white/10"
