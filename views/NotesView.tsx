@@ -588,16 +588,21 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       const matchesSubCat = !selectedSubCat || note.subCategory === selectedSubCat;
       if (selectedCat === 'Inbox') return note.category === 'Inbox';
       
-      const cleanContent = (note.title + " " + stripHtml(note.content)).toLowerCase();
       const { mode, terms } = parseSearchQuery(searchQuery);
+      if (terms.length === 0) return matchesMainCat && matchesSubCat;
+
+      const cleanContent = (
+          (note.title || '') + " " + 
+          (note.fileName || '') + " " + 
+          (note.tags?.join(" ") || '') + " " + 
+          stripHtml(note.content || "")
+      ).toLowerCase();
       
       let matchesSearch = true;
-      if (terms.length > 0) {
-          if (mode === 'AND') {
-              matchesSearch = terms.every(term => cleanContent.includes(term));
-          } else {
-              matchesSearch = terms.some(term => cleanContent.includes(term));
-          }
+      if (mode === 'AND') {
+          matchesSearch = terms.every(term => cleanContent.includes(term));
+      } else {
+          matchesSearch = terms.some(term => cleanContent.includes(term));
       }
       return matchesMainCat && matchesSubCat && matchesSearch;
     });
@@ -761,7 +766,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           // Skip self and already linked
           if (n.id === selectedNoteId || selectedNote?.linkedNoteIds?.includes(n.id)) return false;
 
-          const cleanContent = (n.title + " " + (n.content ? stripHtml(n.content) : "")).toLowerCase();
+          const cleanContent = (
+              (n.title || '') + " " + 
+              (n.fileName || '') + " " + 
+              (n.tags?.join(" ") || '') + " " + 
+              stripHtml(n.content || "")
+          ).toLowerCase();
           
           if (mode === 'AND') {
               return terms.every(term => cleanContent.includes(term));
