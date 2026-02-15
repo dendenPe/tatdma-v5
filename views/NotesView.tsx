@@ -1754,7 +1754,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       {/* 2. MIDDLE COLUMN */}
       <div 
         className={`flex flex-col min-h-0 bg-white shrink-0 border-r border-gray-100 ${isResizing ? '' : 'transition-all duration-300'} ${(isEditMode || !selectedNoteId) ? 'flex' : 'hidden md:flex'}`}
-        style={{ width: windowWidth >= 768 ? (isEditMode ? '65%' : layout.listW) : '100%' }}
+        style={{ width: windowWidth >= 768 ? (isEditMode ? `${editorRatio}%` : layout.listW) : '100%' }}
       >
          {!isEditMode ? (
              <>
