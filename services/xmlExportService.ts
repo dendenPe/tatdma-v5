@@ -90,11 +90,13 @@ export class XmlExportService {
         bankTotalCHF += (balances.comdirect || 0);
         if (balances.customAccounts) {
             balances.customAccounts.forEach(acc => {
-                let val = acc.amount;
-                // Simple conversion estimate for XML if rate not provided, ideally passed in
-                if (acc.currency === 'USD') val = val * (data.tax.rateUSD || 0.85);
-                else if (acc.currency === 'EUR') val = val * (data.tax.rateEUR || 0.94);
-                bankTotalCHF += val;
+                if (acc.includeInTaxReport !== false) { // NEW CHECK
+                    let val = acc.amount;
+                    // Simple conversion estimate for XML if rate not provided, ideally passed in
+                    if (acc.currency === 'USD') val = val * (data.tax.rateUSD || 0.85);
+                    else if (acc.currency === 'EUR') val = val * (data.tax.rateEUR || 0.94);
+                    bankTotalCHF += val;
+                }
             });
         }
     }

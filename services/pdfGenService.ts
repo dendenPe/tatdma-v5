@@ -168,12 +168,14 @@ export class PdfGenService {
         // Custom Dynamic Accounts
         if (balances.customAccounts) {
             balances.customAccounts.forEach(acc => {
-                let valCHF = acc.amount;
-                if (acc.currency === 'USD') valCHF = acc.amount * rateUSD;
-                else if (acc.currency === 'EUR') valCHF = acc.amount * rateEUR;
-                
-                bankRows.push([`${acc.name} (${acc.currency} ${fmtNum(acc.amount, '')})`, fmtNum(valCHF, 'CHF')]);
-                totalBank += valCHF;
+                if (acc.includeInTaxReport !== false) {
+                    let valCHF = acc.amount;
+                    if (acc.currency === 'USD') valCHF = acc.amount * rateUSD;
+                    else if (acc.currency === 'EUR') valCHF = acc.amount * rateEUR;
+                    
+                    bankRows.push([`${acc.name} (${acc.currency} ${fmtNum(acc.amount, '')})`, fmtNum(valCHF, 'CHF')]);
+                    totalBank += valCHF;
+                }
             });
         }
 

@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileDown, 
@@ -498,7 +499,8 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           id: `acc_${Date.now()}`, 
           name: 'Neue Bank', 
           amount: 0, 
-          currency: 'CHF' 
+          currency: 'CHF',
+          includeInTaxReport: true
       };
       
       const newBalances = { ...data.tax.balances };
@@ -999,11 +1001,23 @@ const TaxView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                                         <option value="USD">USD</option>
                                     </select>
                                 </div>
-                                {acc.currency !== 'CHF' && (
-                                    <p className="text-[9px] text-gray-400 text-right font-bold">
-                                        ~ {(acc.amount * (acc.currency === 'USD' ? (data.tax.rateUSD || 0.85) : (data.tax.rateEUR || 0.94))).toFixed(2)} CHF
-                                    </p>
-                                )}
+                                <div className="flex justify-between items-center">
+                                    {acc.currency !== 'CHF' ? (
+                                        <p className="text-[9px] text-gray-400 font-bold">
+                                            ~ {(acc.amount * (acc.currency === 'USD' ? (data.tax.rateUSD || 0.85) : (data.tax.rateEUR || 0.94))).toFixed(2)} CHF
+                                        </p>
+                                    ) : <div></div>}
+                                    
+                                    <div className="flex items-center gap-1.5" title="Auf Steuerreport (PDF) anzeigen?">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={acc.includeInTaxReport !== false} 
+                                            onChange={(e) => updateCustomAccount(acc.id, 'includeInTaxReport', e.target.checked)}
+                                            className="w-3.5 h-3.5 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
+                                        />
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wide">Report</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     ))}

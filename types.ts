@@ -162,6 +162,7 @@ export interface CustomBankAccount {
   amount: number;
   currency: string; // 'CHF', 'EUR', 'USD'
   iban?: string;
+  includeInTaxReport?: boolean; // NEW: Controls visibility in Tax PDF
 }
 
 export interface BankBalance {
