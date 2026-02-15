@@ -67,9 +67,14 @@ import {
   Combine, 
   Split, 
   Search as SearchIcon, 
-  Printer 
+  Printer,
+  CheckCircle2,
+  Circle,
+  Package,
+  LayoutGrid
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
+import JSZip from 'jszip';
 // TIPTAP IMPORTS
 import { useEditor, EditorContent, Extension } from '@tiptap/react';
 import { StarterKit } from '@tiptap/starter-kit';
@@ -173,7 +178,15 @@ const parseSearchQuery = (query: string): { mode: 'AND' | 'OR', terms: string[] 
     return { mode: 'AND', terms: raw.split(/\s+/).filter(t => t.trim().length > 0) };
 };
 
-const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: () => void, onRemove?: () => void }) => {
+interface PdfThumbnailProps { 
+    fileId: string; 
+    onClick: () => void; 
+    onRemove?: () => void;
+    isSelected?: boolean;
+    onToggleSelect?: () => void;
+}
+
+const PdfThumbnail = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }: PdfThumbnailProps) => {
     const [thumbUrl, setThumbUrl] = useState<string | null>(null);
 
     useEffect(() => {
@@ -204,8 +217,8 @@ const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: 
     }, [fileId]);
 
     return (
-        <div className="relative group bg-gray-100 rounded-lg p-2 border border-gray-200 hover:border-blue-300 transition-all cursor-pointer">
-            <div onClick={onClick} className="flex flex-col items-center">
+        <div className={`relative group bg-gray-100 rounded-lg p-2 border transition-all cursor-pointer ${isSelected ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+            <div onClick={onClick} className="flex flex-col items-center relative">
                 {thumbUrl ? (
                     <img src={thumbUrl} className="w-full h-auto rounded shadow-sm mb-2" alt="PDF Page 1" />
                 ) : (
@@ -215,10 +228,20 @@ const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: 
                 )}
                 <span className="text-[10px] text-gray-500 font-mono truncate w-full text-center">PDF Anhang</span>
             </div>
+            
+            {onToggleSelect && (
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
+                    className={`absolute top-2 left-2 p-1 rounded-full shadow-md z-10 transition-all ${isSelected ? 'bg-blue-600 text-white' : 'bg-white text-gray-300 hover:text-blue-400'}`}
+                >
+                    {isSelected ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+                </button>
+            )}
+
             {onRemove && (
                 <button 
                     onClick={(e) => { e.stopPropagation(); onRemove(); }} 
-                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-20"
                 >
                     <X size={12} />
                 </button>
@@ -226,6 +249,59 @@ const PdfThumbnail = ({ fileId, onClick, onRemove }: { fileId: string, onClick: 
         </div>
     );
 };
+
+const PdfListItem = ({ fileId, onClick, onRemove, isSelected, onToggleSelect }: PdfThumbnailProps) => {
+    const [fileName, setFileName] = useState<string>("Lade...");
+    const [fileSize, setFileSize] = useState<string>("");
+
+    useEffect(() => {
+        DBService.getFile(fileId).then(blob => {
+            if(blob) {
+                if (blob instanceof File) setFileName(blob.name);
+                else setFileName(`Anhang_${fileId.substring(0,5)}.pdf`);
+                setFileSize(`${(blob.size / 1024).toFixed(0)} KB`);
+            }
+        });
+    }, [fileId]);
+
+    return (
+        <div 
+            onClick={onClick}
+            className={`group flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:border-blue-300'}`}
+        >
+            {/* Selection Circle */}
+            {onToggleSelect && (
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
+                    className={`shrink-0 ${isSelected ? 'text-blue-600' : 'text-gray-300 hover:text-blue-400'}`}
+                >
+                    {isSelected ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                </button>
+            )}
+            
+            {/* Icon */}
+            <div className="p-2.5 bg-red-50 text-red-500 rounded-lg shrink-0 border border-red-100">
+                <FileText size={20} />
+            </div>
+
+            {/* Meta */}
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-gray-700 truncate" title={fileName}>{fileName}</div>
+                <div className="text-[10px] text-gray-400 font-mono uppercase">{fileSize} • PDF</div>
+            </div>
+
+            {/* Remove */}
+            {onRemove && (
+                <button 
+                    onClick={(e) => { e.stopPropagation(); onRemove(); }}
+                    className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                >
+                    <Trash2 size={16} />
+                </button>
+            )}
+        </div>
+    )
+}
 
 const PdfPage = ({ page, scale, searchQuery, isLensEnabled }: { page: any, scale: number, searchQuery: string, isLensEnabled: boolean }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -383,6 +459,12 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
   // NEW: Buffered User Note Input for Debouncing
   const [userNoteInput, setUserNoteInput] = useState('');
 
+  // NEW: Multi-Select State
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<Set<string>>(new Set());
+  
+  // NEW: Attachment View Mode State
+  const [attachmentViewMode, setAttachmentViewMode] = useState<'grid' | 'list'>('grid');
+
   const lastNoteIdRef = useRef<string | null>(null);
   const mobileImportInputRef = useRef<HTMLInputElement>(null);
   const zipImportInputRef = useRef<HTMLInputElement>(null);
@@ -394,6 +476,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       window.addEventListener('resize', handleResize);
       return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Clear selections when note changes
+  useEffect(() => {
+      setSelectedAttachmentIds(new Set());
+  }, [selectedNoteId]);
 
   useEffect(() => {
       let needsUpdate = false;
@@ -770,22 +857,205 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       }, 60000); 
   };
 
+  // Helper to generate Note content as PDF Blob
+  const generateNotePdfBlob = async (): Promise<Blob | null> => {
+      if (!selectedNote) return null;
+      try {
+          // PRE-PROCESS HTML FOR PDF GENERATION TO FIX BUGS
+          // Fallback to selectedNote.content if editor is not available (e.g. read mode)
+          let cleanHtml = editor ? editor.getHTML() : selectedNote.content;
+          
+          // 1. Fix Empty Lines: Ensure they have content
+          cleanHtml = cleanHtml.replace(/<p><\/p>/g, '<p>&nbsp;</p>');
+          
+          // 2. Prepare Container
+          const element = document.createElement('div');
+          element.innerHTML = `
+              <div class="pdf-container">
+                <h1 style="font-size:24px; font-weight:bold; margin-bottom:20px; border-bottom:2px solid #eee; padding-bottom:10px;">${selectedNote.title}</h1>
+                <div class="tiptap-content prose">${cleanHtml}</div>
+              </div>
+          `;
+          
+          // 3. UNWRAP P TAGS IN LISTS (Tiptap adds <p> inside <li> which breaks flow)
+          const listItems = element.querySelectorAll('li p');
+          listItems.forEach(p => {
+              const parent = p.parentNode;
+              if (parent) {
+                  while (p.firstChild) {
+                      parent.insertBefore(p.firstChild, p);
+                  }
+                  parent.removeChild(p);
+              }
+          });
+
+          // CSS for PDF generation - AGGRESSIVE OVERRIDES
+          const style = document.createElement('style');
+          style.innerHTML = `
+              .pdf-container {
+                  width: 700px !important;
+                  padding: 20px;
+                  background: white;
+                  font-family: Helvetica, Arial, sans-serif;
+                  font-size: 12px;
+                  color: #000;
+                  line-height: 1.5;
+              }
+              
+              /* IMAGES */
+              img { max-width: 100% !important; height: auto !important; display: block; margin: 10px auto; }
+              
+              /* LISTS - THE "NUCLEAR" OPTION: Manual Bullets */
+              ul, ol {
+                  list-style: none !important; 
+                  padding-left: 0 !important; 
+                  margin-top: 0.5em !important;
+                  margin-bottom: 0.5em !important;
+              }
+              li {
+                  position: relative !important;
+                  padding-left: 25px !important; /* Space for bullet */
+                  margin-bottom: 4px !important;
+                  text-align: left !important;
+              }
+              
+              /* Custom Bullet for UL */
+              ul li::before {
+                  content: "•";
+                  position: absolute;
+                  left: 5px;
+                  top: 0;
+                  font-weight: bold;
+              }
+              
+              /* Custom Number for OL */
+              ol { counter-reset: item; }
+              ol li::before {
+                  content: counter(item) ". ";
+                  counter-increment: item;
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  font-weight: bold;
+              }
+              
+              /* HIGHLIGHTS - Fix for overlay opacity using Mix Blend Mode */
+              mark {
+                  background-color: #fef08a !important;
+                  color: inherit !important;
+                  padding: 0 2px;
+                  border-radius: 2px;
+                  mix-blend-mode: multiply; /* Allows text to show through */
+                  display: inline;
+              }
+              
+              /* EMPTY LINES CHECK */
+              p:empty::before {
+                  content: '\\00a0';
+                  display: inline-block;
+              }
+              
+              /* TABLES */
+              table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+              td, th { border: 1px solid #ddd; padding: 6px; }
+              th { background-color: #f3f4f6; font-weight: bold; }
+          `;
+          element.appendChild(style);
+
+          // Use html2pdf to generate blob
+          const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
+          const fileName = `${safeTitle}.pdf`;
+
+          const opt = {
+              margin: [10, 10, 10, 10] as [number, number, number, number],
+              filename: fileName,
+              image: { type: 'jpeg' as const, quality: 0.98 },
+              html2canvas: { 
+                  scale: 2, 
+                  useCORS: true, 
+                  letterRendering: true,
+                  scrollY: 0, 
+                  scrollX: 0
+              },
+              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+              pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+          };
+
+          // Generate PDF Blob
+          return await html2pdf().set(opt).from(element).output('blob');
+      } catch (e) {
+          console.error("PDF Gen Error", e);
+          return null;
+      }
+  };
+
   const handleNativeShare = async (forceType?: 'blob' | 'html') => {
       if (!selectedNote) return;
+
+      // Check if we have multiple attachments selected
+      if (selectedAttachmentIds.size > 0 && selectedNote.type === 'note') {
+          // COMPOSITE SHARE: NOTE PDF + SELECTED PDFS
+          try {
+              const files: File[] = [];
+              
+              // 1. Generate Note PDF
+              const noteBlob = await generateNotePdfBlob();
+              if (noteBlob) {
+                  const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
+                  files.push(new File([noteBlob], `${safeTitle}.pdf`, { type: 'application/pdf' }));
+              }
+
+              // 2. Fetch Selected Attachments with proper names
+                let attachmentIndex = 1;
+                for (const id of selectedAttachmentIds) {
+                    const blob = await DBService.getFile(id);
+                    if (blob) {
+                        // Determine extension
+                        let ext = 'pdf';
+                        if (blob.type.includes('image')) ext = 'jpg';
+                        else if (blob.type.includes('png')) ext = 'png';
+                        
+                        // Get original filename if available
+                        let originalName = '';
+                        if (blob instanceof File && blob.name) {
+                            originalName = blob.name.replace(/\.[^/.]+$/, ""); // remove extension
+                        }
+                        
+                        // Create filename with original name if available
+                        let filename;
+                        if (originalName) {
+                            // Sanitize original name
+                            const safeOriginal = originalName.replace(/[^a-z0-9äöüß \-\.]/gi, '_');
+                            filename = `Anhang_${attachmentIndex}_${safeOriginal}.${ext}`;
+                        } else {
+                            filename = `Anhang_${attachmentIndex}.${ext}`;
+                        }
+                        
+                        files.push(new File([blob], filename, { type: blob.type }));
+                        attachmentIndex++;
+                    }
+                }
+
+              if (files.length > 0 && navigator.canShare && navigator.canShare({ files })) {
+                  await navigator.share({
+                      files,
+                      title: selectedNote.title,
+                      text: `Notiz: ${selectedNote.title} mit ${files.length-1} Anhängen`
+                  });
+              } else {
+                  // Fallback: If can't share multiple, alert user to try ZIP
+                  alert("Dein Browser unterstützt das Teilen mehrerer Dateien nicht direkt. Bitte nutze den ZIP Button.");
+              }
+          } catch (e: any) {
+              console.error("Composite share failed", e);
+              if (e.name !== 'AbortError') alert("Fehler beim Teilen.");
+          }
+          return;
+      }
 
       // Determine effective mode based on explicit request OR context
       // If we are in 'blob' mode or asking for blob, prioritize activeFileBlob
       const useBlob = forceType === 'blob' || (!forceType && activeFileBlob);
-      
-      // However, if the note itself is a text note (type='note') and forceType is NOT blob,
-      // we prefer HTML export, unless activeFileBlob is set AND we didn't ask for HTML.
-      // Refined Logic:
-      // 1. Explicit 'html' -> Generate PDF from text.
-      // 2. Explicit 'blob' -> Share activeFileBlob.
-      // 3. No Arg:
-      //    - If note type is 'pdf'/'image' -> Share blob.
-      //    - If note type is 'note' -> Generate PDF from text (ignoring potential background blobs).
-
       const effectiveMode = forceType || (selectedNote.type === 'note' ? 'html' : 'blob');
 
       // CASE 1: Attachment (PDF/Image) - Share Blob
@@ -827,129 +1097,11 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
       // CASE 2: Text Note -> GENERATE PDF via html2pdf (Screenshots the DOM for perfect fidelity)
       if (effectiveMode === 'html' && selectedNote.type === 'note') {
           try {
-              // PRE-PROCESS HTML FOR PDF GENERATION TO FIX BUGS
-              // Fallback to selectedNote.content if editor is not available (e.g. read mode)
-              let cleanHtml = editor ? editor.getHTML() : selectedNote.content;
+              const pdfBlob = await generateNotePdfBlob();
+              if (!pdfBlob) throw new Error("PDF Gen failed");
               
-              // 1. Fix Empty Lines: Ensure they have content
-              cleanHtml = cleanHtml.replace(/<p><\/p>/g, '<p>&nbsp;</p>');
-              
-              // 2. Prepare Container
-              const element = document.createElement('div');
-              element.innerHTML = `
-                  <div class="pdf-container">
-                    <h1 style="font-size:24px; font-weight:bold; margin-bottom:20px; border-bottom:2px solid #eee; padding-bottom:10px;">${selectedNote.title}</h1>
-                    <div class="tiptap-content prose">${cleanHtml}</div>
-                  </div>
-              `;
-              
-              // 3. UNWRAP P TAGS IN LISTS (Tiptap adds <p> inside <li> which breaks flow)
-              const listItems = element.querySelectorAll('li p');
-              listItems.forEach(p => {
-                  const parent = p.parentNode;
-                  if (parent) {
-                      while (p.firstChild) {
-                          parent.insertBefore(p.firstChild, p);
-                      }
-                      parent.removeChild(p);
-                  }
-              });
-
-              // CSS for PDF generation - AGGRESSIVE OVERRIDES
-              const style = document.createElement('style');
-              style.innerHTML = `
-                  .pdf-container {
-                      width: 700px !important;
-                      padding: 20px;
-                      background: white;
-                      font-family: Helvetica, Arial, sans-serif;
-                      font-size: 12px;
-                      color: #000;
-                      line-height: 1.5;
-                  }
-                  
-                  /* IMAGES */
-                  img { max-width: 100% !important; height: auto !important; display: block; margin: 10px auto; }
-                  
-                  /* LISTS - THE "NUCLEAR" OPTION: Manual Bullets */
-                  ul, ol {
-                      list-style: none !important; 
-                      padding-left: 0 !important; 
-                      margin-top: 0.5em !important;
-                      margin-bottom: 0.5em !important;
-                  }
-                  li {
-                      position: relative !important;
-                      padding-left: 25px !important; /* Space for bullet */
-                      margin-bottom: 4px !important;
-                      text-align: left !important;
-                  }
-                  
-                  /* Custom Bullet for UL */
-                  ul li::before {
-                      content: "•";
-                      position: absolute;
-                      left: 5px;
-                      top: 0;
-                      font-weight: bold;
-                  }
-                  
-                  /* Custom Number for OL */
-                  ol { counter-reset: item; }
-                  ol li::before {
-                      content: counter(item) ". ";
-                      counter-increment: item;
-                      position: absolute;
-                      left: 0;
-                      top: 0;
-                      font-weight: bold;
-                  }
-                  
-                  /* HIGHLIGHTS - Fix for overlay opacity using Mix Blend Mode */
-                  mark {
-                      background-color: #fef08a !important;
-                      color: inherit !important;
-                      padding: 0 2px;
-                      border-radius: 2px;
-                      mix-blend-mode: multiply; /* Allows text to show through */
-                      display: inline;
-                  }
-                  
-                  /* EMPTY LINES CHECK */
-                  p:empty::before {
-                      content: '\\00a0';
-                      display: inline-block;
-                  }
-                  
-                  /* TABLES */
-                  table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
-                  td, th { border: 1px solid #ddd; padding: 6px; }
-                  th { background-color: #f3f4f6; font-weight: bold; }
-              `;
-              element.appendChild(style);
-
-              // Use html2pdf to generate blob
               const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß ]/gi, '_').trim() || 'Notiz';
               const fileName = `${safeTitle}.pdf`;
-
-              const opt = {
-                  margin: [10, 10, 10, 10] as [number, number, number, number],
-                  filename: fileName,
-                  image: { type: 'jpeg' as const, quality: 0.98 },
-                  html2canvas: { 
-                      scale: 2, 
-                      useCORS: true, 
-                      letterRendering: true,
-                      scrollY: 0, 
-                      scrollX: 0
-                  },
-                  jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-                  pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-              };
-
-              // Generate PDF Blob
-              const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
-              
               const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
               if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -968,6 +1120,102 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
               alert("Fehler beim Erstellen des PDFs. (html2pdf)");
           }
       }
+  };
+
+  const handleZipSelected = async () => {
+      if (!selectedNote) return;
+      try {
+          const zip = new JSZip();
+          // Allow spaces and dashes in title for readability
+          const safeTitle = selectedNote.title.replace(/[^a-z0-9äöüß \-\.]/gi, '_').trim() || 'Notiz';
+          
+          // 1. Add Note PDF (Always included for context)
+          const noteBlob = await generateNotePdfBlob();
+          if (noteBlob) zip.file(`${safeTitle}.pdf`, noteBlob);
+
+          // 2. Add Selected Attachments
+          let attachmentCounter = 0;
+          for (const id of selectedAttachmentIds) {
+              let blob = await DBService.getFile(id);
+              
+              // Fallback to Vault if not in DB (Desktop use case)
+              if (!blob && selectedNote.attachments && selectedNote.attachments.includes(id) && VaultService.isConnected()) {
+                  // Currently we don't have a direct map of ID -> Vault Path for attachments in the data model
+              }
+
+              if (blob) {
+                  attachmentCounter++;
+                  // Determine extension based on MIME type if unknown
+                  let ext = 'bin';
+                  if (blob.type === 'application/pdf') ext = 'pdf';
+                  else if (blob.type.includes('jpeg') || blob.type.includes('jpg')) ext = 'jpg';
+                  else if (blob.type.includes('png')) ext = 'png';
+                  
+                  // Construct Filename
+                  let originalName = '';
+                  // Check if blob is a File instance to get the name
+                  if (blob instanceof File && blob.name) {
+                      originalName = blob.name.replace(/\.[^/.]+$/, ""); // remove extension
+                  }
+                  
+                  let fileName;
+                  if (originalName) {
+                      // Sanitize original name
+                      const safeOriginal = originalName.replace(/[^a-z0-9äöüß \-\.]/gi, '_');
+                      fileName = `Anhang_${attachmentCounter}_${safeOriginal}.${ext}`;
+                  } else {
+                      fileName = `Anhang_${attachmentCounter}.${ext}`;
+                  }
+                  
+                  // Ensure uniqueness in zip
+                  let finalName = fileName;
+                  let dupCount = 1;
+                  while (zip.file(finalName)) {
+                      const parts = fileName.split('.');
+                      const base = parts.slice(0, -1).join('.');
+                      const extension = parts[parts.length - 1];
+                      finalName = `${base}_${dupCount}.${extension}`;
+                      dupCount++;
+                  }
+
+                  zip.file(finalName, blob);
+              }
+          }
+
+          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          // Zip filename matches note title
+          const zipFile = new File([zipBlob], `${safeTitle}.zip`, { type: 'application/zip' });
+
+          // Try Share, Fallback to Modal on Error or if Share fails
+          let shared = false;
+          if (navigator.canShare && navigator.canShare({ files: [zipFile] })) {
+              try {
+                  await navigator.share({
+                      files: [zipFile],
+                      title: `${selectedNote.title} (ZIP)`
+                  });
+                  shared = true;
+              } catch (shareError: any) {
+                  console.warn("Share failed, falling back to download:", shareError);
+                  // "Permission denied" or "AbortError" falls here.
+              }
+          }
+          
+          if (!shared) {
+              const url = URL.createObjectURL(zipBlob);
+              setShareModalData({ url, filename: `${safeTitle}.zip` });
+          }
+
+      } catch (e: any) {
+          alert("Fehler beim Zippen: " + e.message);
+      }
+  };
+
+  const toggleAttachmentSelection = (id: string) => {
+      const newSet = new Set(selectedAttachmentIds);
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
+      setSelectedAttachmentIds(newSet);
   };
 
   const closeShareModal = () => {
@@ -1507,15 +1755,37 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
          {selectedNote ? (
              isEditMode ? (
                  <div className="flex flex-col h-full bg-gray-50 border-l border-gray-100">
-                     <div className="p-4 border-b border-gray-100 bg-white">
-                         <h3 className="font-bold text-gray-700 text-sm">Anhänge verwalten</h3>
-                         <p className="text-[10px] text-gray-400">PDFs hierher ziehen</p>
+                     <div className="p-4 border-b border-gray-100 bg-white flex justify-between items-center">
+                         <div>
+                             <h3 className="font-bold text-gray-700 text-sm">Anhänge verwalten</h3>
+                             <p className="text-[10px] text-gray-400">PDFs hierher ziehen</p>
+                         </div>
+                         <div className="flex bg-gray-100 rounded-lg p-0.5">
+                             <button 
+                                 onClick={() => setAttachmentViewMode('grid')}
+                                 className={`p-1.5 rounded-md ${attachmentViewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                             >
+                                 <LayoutGrid size={14} />
+                             </button>
+                             <button 
+                                 onClick={() => setAttachmentViewMode('list')}
+                                 className={`p-1.5 rounded-md ${attachmentViewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                             >
+                                 <List size={14} />
+                             </button>
+                         </div>
                      </div>
-                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                     <div className="flex-1 overflow-y-auto p-4">
                          {selectedNote.attachments && selectedNote.attachments.length > 0 ? (
-                             selectedNote.attachments.map(id => (
-                                 <PdfThumbnail key={id} fileId={id} onClick={() => {}} onRemove={() => removeAttachment(id)} />
-                             ))
+                             <div className={attachmentViewMode === 'grid' ? "space-y-4" : "space-y-2"}>
+                                 {selectedNote.attachments.map(id => (
+                                     attachmentViewMode === 'grid' ? (
+                                         <PdfThumbnail key={id} fileId={id} onClick={() => {}} onRemove={() => removeAttachment(id)} />
+                                     ) : (
+                                         <PdfListItem key={id} fileId={id} onClick={() => {}} onRemove={() => removeAttachment(id)} />
+                                     )
+                                 ))}
+                             </div>
                          ) : (
                              <div className="text-center py-10 text-gray-300 text-xs italic border-2 border-dashed border-gray-200 rounded-xl">Keine Anhänge</div>
                          )}
@@ -1539,7 +1809,7 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                                     {/* SHARED ACTIONS */}
                                     {(activeFileBlob || selectedNote.type === 'note') && (
                                         <>
-                                            {/* Note Share Button: Explicitly shares HTML content as PDF unless note itself is PDF */}
+                                            {/* Note Share Button */}
                                             <button 
                                                 onClick={() => handleNativeShare(selectedNote.type === 'note' ? 'html' : 'blob')} 
                                                 className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors shrink-0" 
@@ -1680,10 +1950,75 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                         )}
                         {selectedNote.attachments && selectedNote.attachments.length > 0 && (
                             <div className="border-t border-gray-200 pt-6">
-                                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><FileText size={14} /> PDF Anhänge</h4>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> PDF Anhänge</h4>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        {selectedAttachmentIds.size > 0 && (
+                                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-2 mr-2">
+                                                <button 
+                                                    onClick={handleZipSelected}
+                                                    className="px-3 py-1 bg-purple-100 text-purple-700 rounded-lg text-[10px] font-bold uppercase tracking-wide hover:bg-purple-200 transition-colors flex items-center gap-1"
+                                                >
+                                                    <Package size={12} /> ZIP
+                                                </button>
+                                                <button 
+                                                    onClick={() => setSelectedAttachmentIds(new Set())}
+                                                    className="text-[10px] text-gray-400 hover:text-gray-600 underline"
+                                                >
+                                                    Auswahl aufheben ({selectedAttachmentIds.size})
+                                                </button>
+                                            </div>
+                                        )}
+                                        {selectedAttachmentIds.size === 0 && (
+                                            <button 
+                                                onClick={() => {
+                                                    if (selectedNote.attachments) {
+                                                        const allIds = new Set(selectedNote.attachments);
+                                                        setSelectedAttachmentIds(allIds);
+                                                    }
+                                                }}
+                                                className="text-[10px] text-gray-400 hover:text-blue-500 font-bold mr-3"
+                                            >
+                                                Alle auswählen
+                                            </button>
+                                        )}
+                                        
+                                        <div className="flex bg-gray-100 rounded-lg p-0.5">
+                                            <button 
+                                                onClick={() => setAttachmentViewMode('grid')}
+                                                className={`p-1.5 rounded-md ${attachmentViewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                                            >
+                                                <LayoutGrid size={14} />
+                                            </button>
+                                            <button 
+                                                onClick={() => setAttachmentViewMode('list')}
+                                                className={`p-1.5 rounded-md ${attachmentViewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}
+                                            >
+                                                <List size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className={attachmentViewMode === 'grid' ? "grid grid-cols-2 md:grid-cols-3 gap-4" : "space-y-2"}>
                                     {selectedNote.attachments.map(id => (
-                                        <PdfThumbnail key={id} fileId={id} onClick={async () => { const blob = await DBService.getFile(id); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}/>
+                                        attachmentViewMode === 'grid' ? (
+                                            <PdfThumbnail 
+                                                key={id} 
+                                                fileId={id} 
+                                                onClick={async () => { const blob = await DBService.getFile(id); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
+                                                isSelected={selectedAttachmentIds.has(id)}
+                                                onToggleSelect={() => toggleAttachmentSelection(id)}
+                                            />
+                                        ) : (
+                                            <PdfListItem 
+                                                key={id} 
+                                                fileId={id} 
+                                                onClick={async () => { const blob = await DBService.getFile(id); if(blob) { setActiveFileBlob(blob); setIsMaximized(true); } }}
+                                                isSelected={selectedAttachmentIds.has(id)}
+                                                onToggleSelect={() => toggleAttachmentSelection(id)}
+                                            />
+                                        )
                                     ))}
                                 </div>
                             </div>
@@ -1707,7 +2042,14 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
                   <h3 className="text-lg font-black text-gray-800 mb-2">Datei Bereit</h3>
                   <p className="text-xs text-gray-500 mb-6 bg-gray-50 p-2 rounded-lg break-all font-mono">{shareModalData.filename}</p>
                   <div className="space-y-3">
-                      <a href={shareModalData.url} target="_blank" rel="noopener noreferrer" className="block w-full py-3 bg-[#16325c] text-white font-bold rounded-xl shadow-lg hover:bg-blue-800 transition-all active:scale-95 flex items-center justify-center gap-2" onClick={() => setTimeout(closeShareModal, 1000)}><Download size={18} /> Öffnen / Teilen</a>
+                      <a 
+                            href={shareModalData.url} 
+                            download={shareModalData.filename}
+                            className="block w-full py-3 bg-[#16325c] text-white font-bold rounded-xl shadow-lg hover:bg-blue-800 transition-all active:scale-95 flex items-center justify-center gap-2" 
+                            onClick={() => setTimeout(closeShareModal, 1000)}
+                        >
+                            <Download size={18} /> Öffnen / Teilen
+                        </a>
                       <p className="text-[10px] text-gray-400">Öffnet die Datei in einem neuen Tab. Nutze dort den Browser-Share-Button.</p>
                   </div>
               </div>
@@ -1784,28 +2126,54 @@ const NotesView: React.FC<Props> = ({ data, onUpdate, isVaultConnected }) => {
           </div>
       )}
 
-      {/* TABLE MODAL */}
-      {tableModal.open && (
-          <div className="absolute inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4 animate-in zoom-in-95">
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                      <h3 className="font-bold text-gray-800 flex items-center gap-2"><TableIcon size={18} className="text-blue-500"/> Tabelle erstellen</h3>
-                      <button onClick={() => setTableModal({...tableModal, open: false})} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold text-gray-400">Zeilen</label>
-                          <input type="number" min="1" max="50" value={tableModal.rows} onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
-                      </div>
-                      <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold text-gray-400">Spalten</label>
-                          <input type="number" min="1" max="20" value={tableModal.cols} onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})} className="w-full border border-gray-200 rounded-lg px-3 py-2 font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-100"/>
-                      </div>
-                  </div>
-                  <button onClick={confirmInsertTable} className="w-full bg-[#16325c] text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-800 transition-colors">Einfügen</button>
-              </div>
-          </div>
-      )}
+      {/* TABLE CREATION MODAL */}
+{tableModal.open && (
+    <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 max-w-full animate-in zoom-in-95 duration-200">
+            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                <TableIcon size={18} className="text-blue-500" /> Tabelle einfügen
+            </h3>
+            <div className="space-y-4">
+                <div>
+                    <label className="text-xs text-gray-500 block mb-1">Zeilen</label>
+                    <input 
+                        type="number" 
+                        min="1" 
+                        max="20" 
+                        value={tableModal.rows} 
+                        onChange={(e) => setTableModal({...tableModal, rows: parseInt(e.target.value) || 1})}
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                </div>
+                <div>
+                    <label className="text-xs text-gray-500 block mb-1">Spalten</label>
+                    <input 
+                        type="number" 
+                        min="1" 
+                        max="20" 
+                        value={tableModal.cols} 
+                        onChange={(e) => setTableModal({...tableModal, cols: parseInt(e.target.value) || 1})}
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                </div>
+            </div>
+            <div className="flex gap-2 mt-6">
+                <button 
+                    onClick={() => setTableModal({...tableModal, open: false})}
+                    className="flex-1 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                >
+                    Abbrechen
+                </button>
+                <button 
+                    onClick={confirmInsertTable}
+                    className="flex-1 px-4 py-2 bg-[#16325c] text-white rounded-lg hover:bg-blue-800 transition-colors text-sm font-medium"
+                >
+                    Einfügen
+                </button>
+            </div>
+        </div>
+    </div>
+)}
 
       {tooltip && (
           <div 
