@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   TrendingUp, 
   Wallet, 
@@ -28,18 +28,47 @@ interface Props {
 
 const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
   const currentYear = new Date().getFullYear().toString();
-  const portfolioId = data.currentPortfolioId || Object.keys(data.portfolios)[0];
-  const portfolio = data.portfolios[portfolioId];
-  const portYearData = portfolio?.years[currentYear];
 
   // GOAL STATE
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [goalForm, setGoalForm] = useState<Partial<SavingsGoal>>({});
 
-  // 1. Calculate Net Worth
-  const portValue = portYearData?.summary?.totalValue || 0;
+  // 1. Calculate Net Worth (AGGREGATED FROM ALL PORTFOLIOS)
+  // We use useMemo to efficiently sum up values from ALL portfolios
+  const { totalSecuritiesCHF, totalIBKRCashCHF } = useMemo(() => {
+      let sec = 0;
+      let cash = 0;
+
+      Object.values(data.portfolios).forEach(portfolio => {
+          const portYearData = portfolio.years[currentYear];
+          if (!portYearData) return;
+
+          const rates = portYearData.exchangeRates || {};
+          const usdToChf = rates['USD_CHF'] || 0.88;
+          const eurToUsd = rates['EUR_USD'] || 1.07;
+
+          // 1. Securities (Market Value is in USD Base)
+          const valUSD = portYearData.summary?.totalValue || 0;
+          sec += valUSD * usdToChf;
+
+          // 2. Cash (Convert all to CHF)
+          if (portYearData.cash) {
+              Object.entries(portYearData.cash).forEach(([curr, amt]) => {
+                  let valUSD = 0;
+                  if (curr === 'USD') valUSD = amt;
+                  else if (curr === 'CHF') valUSD = amt / usdToChf;
+                  else if (curr === 'EUR') valUSD = amt * eurToUsd;
+                  else valUSD = amt * (rates[`${curr}_USD`] || 0);
+                  
+                  cash += valUSD * usdToChf;
+              });
+          }
+      });
+
+      return { totalSecuritiesCHF: sec, totalIBKRCashCHF: cash };
+  }, [data.portfolios, currentYear]);
   
-  // Bank Balances Calculation
+  // Bank Balances Calculation (Manual Accounts)
   const balances = data.tax.balances[currentYear] || { ubs: 0, comdirect: 0, ibkr: 0 };
   let bankTotal = (balances.ubs || 0) + (balances.comdirect || 0) + ((balances.comdirectEUR || 0) * (data.tax.rateEUR || 0.94));
   
@@ -53,26 +82,8 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
       });
   }
   
-  const rates = portYearData?.exchangeRates || {};
-  const usdToChf = rates['USD_CHF'] || 0.88;
-  const eurToUsd = rates['EUR_USD'] || 1.07;
-  
-  let cashTotalCHF = 0;
-  if (portYearData?.cash) {
-      Object.entries(portYearData.cash).forEach(([curr, amt]) => {
-          let valUSD = 0;
-          if (curr === 'USD') valUSD = amt;
-          else if (curr === 'CHF') valUSD = amt / usdToChf;
-          else if (curr === 'EUR') valUSD = amt * eurToUsd;
-          else valUSD = amt * (rates[`${curr}_USD`] || 0);
-          cashTotalCHF += valUSD * usdToChf;
-      });
-  }
-
-  const securitiesCHF = (portValue * usdToChf);
-  
-  // Real Total Assets (Securities + IBKR Cash + External Banks)
-  const realTotalAssets = securitiesCHF + cashTotalCHF + bankTotal;
+  // Real Total Assets (All Portfolios Securities + All Portfolios Cash + External Banks)
+  const realTotalAssets = totalSecuritiesCHF + totalIBKRCashCHF + bankTotal;
 
   // 2. Income Calculation
   const salaryData = Object.values(data.salary[currentYear] || {});
@@ -91,10 +102,38 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
   let recurringExpTotal = 0;
   let remainingYearFixCosts = 0;
 
+  // Helper to get exchange rate for recurring expenses
+  const getExchangeRate = (currency: string, year: string): number => {
+      if (currency === 'CHF') return 1;
+      if (currency === 'USD') return data.tax.rateUSD || 0.85;
+      if (currency === 'EUR') return data.tax.rateEUR || 0.94;
+      return 1;
+  };
+
+  // Helper for Recurring Amount
+  const getRecurringAmountForMonth = (rec: any, yearStr: string, month: number) => {
+      if (rec.frequency === 'Q') {
+          const startMonth = rec.paymentMonth || 1; 
+          const m0 = month - 1;
+          const s0 = startMonth - 1;
+          const diff = m0 - s0;
+          if (diff < 0 || diff % 3 !== 0) return null; 
+      } else if (rec.frequency === 'Y') {
+          if (month !== (rec.paymentMonth || 1)) return null;
+      }
+
+      const targetDate = new Date(parseInt(yearStr), month - 1, 1); 
+      const sortedHistory = [...(rec.history || [])].sort((a:any, b:any) => new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime());
+      const activePrice = sortedHistory.find((h:any) => new Date(h.validFrom) <= targetDate);
+      
+      if (!activePrice) return null; 
+
+      const rate = getExchangeRate(activePrice.currency, yearStr);
+      return { amount: activePrice.amount, currency: activePrice.currency, rate };
+  };
+
   if (data.recurringExpenses) {
       for(let m = 0; m < 12; m++) {
-          const isFuture = m > currentMonthIndex;
-          
           data.recurringExpenses.forEach(rec => {
              let isActive = false;
              if (rec.frequency === 'M') isActive = true;
@@ -108,18 +147,10 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
              }
 
              if(isActive) {
-                 // Use latest price for forecast, historical for past
-                 const targetDate = new Date(parseInt(currentYear), m, 1);
-                 const history = [...rec.history].sort((a,b) => new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime());
-                 const activePrice = history.find(h => new Date(h.validFrom) <= targetDate) || history[0];
+                 const activePrice = getRecurringAmountForMonth(rec, currentYear, m + 1);
                  
                  if(activePrice) {
-                     let r = 1;
-                     if(activePrice.currency === 'USD') r = data.tax.rateUSD || 0.85;
-                     if(activePrice.currency === 'EUR') r = data.tax.rateEUR || 0.94;
-                     
-                     const cost = activePrice.amount * r;
-                     
+                     const cost = activePrice.amount * activePrice.rate;
                      if (m <= currentMonthIndex) {
                          recurringExpTotal += cost;
                      } else {
@@ -144,10 +175,10 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
       ? ((allSingleTrades.filter(t => t.pnl > 0).length / allSingleTrades.length) * 100).toFixed(1) 
       : '0.0';
 
-  // Chart Data: Allocation
+  // Chart Data: Allocation (Using Aggregated Values)
   const allocationData = [
-      { name: 'Aktien/Fonds', value: Math.round(securitiesCHF), color: '#3b82f6' },
-      { name: 'Cash (IBKR)', value: Math.round(cashTotalCHF), color: '#8b5cf6' },
+      { name: 'Aktien/Fonds', value: Math.round(totalSecuritiesCHF), color: '#3b82f6' },
+      { name: 'Cash (IBKR)', value: Math.round(totalIBKRCashCHF), color: '#8b5cf6' },
       { name: 'Banken (Privat)', value: Math.round(bankTotal), color: '#10b981' },
   ].filter(d => d.value > 0);
 
@@ -246,7 +277,7 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
            <StatCard 
              label="Gesamtvermögen" 
              value={`${realTotalAssets.toLocaleString('de-CH', {maximumFractionDigits: 0})} CHF`} 
-             sub="Liquidität & Assets"
+             sub="Liquidität & Assets (Alle Portfolios)"
              icon={Landmark}
              color="blue"
              navTarget="holdings"
@@ -284,7 +315,7 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
              onClick={() => onNavigate('holdings')}
            >
               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                  <PieIcon size={14} /> Vermögensaufteilung
+                  <PieIcon size={14} /> Vermögensaufteilung (Total)
               </h4>
               <div className="flex-1 min-h-[250px] relative">
                   <ResponsiveContainer width="100%" height="100%">
