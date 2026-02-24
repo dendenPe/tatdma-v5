@@ -1106,6 +1106,152 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
         </div>
       )}
+
+      {/* EDIT EXPENSE MODAL */}
+      {editingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
+              <h3 className="font-black text-xl text-gray-800">Ausgabe bearbeiten</h3>
+              <button onClick={() => { setEditingId(null); setEditForm({}); }} className="p-2 hover:bg-gray-100 rounded-full">
+                <X size={20}/>
+              </button>
+            </div>
+            
+            {!isSplitting ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
+                      <input
+                        type="date"
+                        value={editForm.date || ''}
+                        onChange={(e) => setEditForm({...editForm, date: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
+                      <select
+                        value={editForm.currency || 'CHF'}
+                        onChange={(e) => setEditForm({...editForm, currency: e.target.value})}
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                      >
+                        <option value="CHF">CHF</option>
+                        <option value="EUR">EUR</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Händler / Beschreibung</label>
+                    <input
+                      type="text"
+                      value={editForm.merchant || ''}
+                      onChange={(e) => handleMerchantChange(e.target.value, true)}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Betrag</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.amount || ''}
+                      onChange={(e) => setEditForm({...editForm, amount: parseFloat(e.target.value)})}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Kategorie</label>
+                    <select
+                      value={editForm.category || 'Sonstiges'}
+                      onChange={(e) => setEditForm({...editForm, category: e.target.value as any})}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                    >
+                      {EXPENSE_CATEGORIES.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Einzelpositionen (bearbeitbar)</label>
+                    <textarea
+                      value={editItemsText}
+                      onChange={(e) => setEditItemsText(e.target.value)}
+                      className="w-full h-32 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono outline-none resize-none"
+                      placeholder="Name: Preis"
+                    />
+                    <p className="text-[10px] text-gray-400">Format pro Zeile: "Artikelname: Preis"</p>
+                  </div>
+
+                  <div className="pt-2">
+                      <button onClick={initSplit} className="text-xs font-bold text-purple-600 hover:underline flex items-center gap-1">
+                          <Split size={12} /> Betrag aufteilen (Splitten)
+                      </button>
+                  </div>
+                </div>
+            ) : (
+                <div className="space-y-4">
+                    <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 mb-4">
+                        <p className="text-xs text-purple-800 font-bold mb-1">Aufteilung für: {editForm.merchant}</p>
+                        <p className="text-xl font-black text-purple-600">{editForm.amount?.toFixed(2)} {editForm.currency}</p>
+                    </div>
+
+                    {splitParts.map((part, idx) => (
+                        <div key={idx} className="flex gap-2 items-end">
+                            <div className="flex-1 space-y-1">
+                                <label className="text-[9px] font-bold text-gray-400 uppercase">Betrag {idx+1}</label>
+                                <input 
+                                    type="number" 
+                                    value={part.amount} 
+                                    onChange={(e) => updateSplit(idx, 'amount', parseFloat(e.target.value))}
+                                    className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold"
+                                />
+                            </div>
+                            <div className="flex-1 space-y-1">
+                                <label className="text-[9px] font-bold text-gray-400 uppercase">Kategorie</label>
+                                <select 
+                                    value={part.category} 
+                                    onChange={(e) => updateSplit(idx, 'category', e.target.value)}
+                                    className="w-full px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                                >
+                                    {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                    ))}
+
+                    <div className="flex justify-between items-center pt-2">
+                        <button onClick={addSplitPart} className="text-xs font-bold text-blue-600 hover:underline">+ Weiterer Teil</button>
+                        <div className={`text-xs font-bold ${Math.abs(splitParts.reduce((s,p)=>s+p.amount,0) - (editForm.amount||0)) < 0.05 ? 'text-green-500' : 'text-red-500'}`}>
+                            Summe: {splitParts.reduce((s,p)=>s+p.amount,0).toFixed(2)} / {editForm.amount?.toFixed(2)}
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            <div className="flex gap-3 mt-8 pt-6 border-t border-gray-100">
+              <button 
+                onClick={() => { setEditingId(null); setEditForm({}); setIsSplitting(false); }} 
+                className="px-6 py-3 text-gray-500 font-bold text-sm hover:bg-gray-100 rounded-xl"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={saveEdit}
+                className="flex-1 px-8 py-3 bg-[#16325c] text-white font-bold text-sm rounded-xl shadow-lg hover:bg-blue-800 transition-all flex items-center justify-center gap-2"
+              >
+                <Save size={18}/> Speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
     </div>
   );
