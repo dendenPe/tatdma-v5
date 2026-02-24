@@ -332,9 +332,11 @@ const DashboardView: React.FC<Props> = ({ data, onUpdate, onNavigate }) => {
                             ))}
                           </Pie>
                           <Tooltip 
-                            contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#f3f4f6', borderRadius: '10px' }}
+                            contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', color: '#ffffff', borderRadius: '10px' }}
+                            labelStyle={{ color: '#ffffff' }}
+                            itemStyle={{ color: '#ffffff' }}
                             formatter={(value: number) => value.toLocaleString('de-CH') + ' CHF'} 
-                          />
+                            />
                       </PieChart>
                   </ResponsiveContainer>
                   {/* Center Text */}
