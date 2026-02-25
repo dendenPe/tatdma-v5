@@ -970,8 +970,9 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
       {/* BUDGET MODAL */}
       {isBudgetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-transparent" onClick={() => setIsBudgetModalOpen(false)}></div>
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200 relative z-10">
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
               <h3 className="font-black text-xl text-gray-800">Budget festlegen</h3>
               <button onClick={() => setIsBudgetModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full">
@@ -1021,8 +1022,9 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
 
       {/* NEW EXPENSE MODAL */}
       {isAdding && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-transparent" onClick={() => setIsAdding(false)}></div>
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200 relative z-10">
             <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100">
               <h3 className="font-black text-xl text-gray-800">Neue Ausgabe</h3>
               <button onClick={() => setIsAdding(false)} className="p-2 hover:bg-gray-100 rounded-full">
@@ -1031,27 +1033,32 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
             </div>
             
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
+              <div className="flex flex-row gap-4">
+                <div className="flex-1 min-w-0 space-y-1">
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Datum</label>
                   <input
                     type="date"
                     value={newExpense.date || ''}
                     onChange={(e) => setNewExpense({...newExpense, date: e.target.value})}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
+                    className="w-full h-12 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none appearance-none"
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="flex-1 min-w-0 space-y-1">
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Währung</label>
-                  <select
-                    value={newExpense.currency || 'CHF'}
-                    onChange={(e) => setNewExpense({...newExpense, currency: e.target.value})}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none"
-                  >
-                    <option value="CHF">CHF</option>
-                    <option value="EUR">EUR</option>
-                    <option value="USD">USD</option>
-                  </select>
+                  <div className="relative">
+                    <select
+                      value={newExpense.currency || 'CHF'}
+                      onChange={(e) => setNewExpense({...newExpense, currency: e.target.value})}
+                      className="w-full h-12 px-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold outline-none appearance-none"
+                    >
+                      <option value="CHF">CHF</option>
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                    </div>
+                  </div>
                 </div>
               </div>
               
