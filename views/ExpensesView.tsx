@@ -816,10 +816,10 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       )})}
                       
                       {/* Mobile Footer Total */}
-                      {searchTerm && filteredExpenses.length > 0 && (
-                          <div className="mt-4 bg-purple-50 p-4 rounded-2xl border border-purple-100 flex justify-between items-center shadow-sm">
-                              <span className="text-xs font-black text-purple-400 uppercase tracking-widest">Summe</span>
-                              <span className="text-xl font-black text-purple-700">{searchTotalSpend.toFixed(2)} CHF</span>
+                      {filteredExpenses.length > 0 && (
+                          <div className={`mt-4 p-4 rounded-2xl border flex justify-between items-center shadow-sm ${searchTerm ? 'bg-purple-50 border-purple-100' : 'bg-gray-50 dark:bg-gray-700 border-gray-100 dark:border-gray-600'}`}>
+                              <span className={`text-xs font-black uppercase tracking-widest ${searchTerm ? 'text-purple-400' : 'text-gray-400'}`}>{searchTerm ? 'Summe' : 'Total Ausgaben'}</span>
+                              <span className={`text-xl font-black ${searchTerm ? 'text-purple-700' : 'text-gray-800 dark:text-white'}`}>{(searchTerm ? searchTotalSpend : dailySpendCHF).toFixed(2)} CHF</span>
                           </div>
                       )}
                   </div>
@@ -827,7 +827,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
           </div>
 
           {/* RECURRING EXPENSES SIDEBAR */}
-          <div className="lg:col-span-1 space-y-4">
+          <div className={`lg:col-span-1 space-y-4 ${searchTerm ? 'hidden lg:block' : ''}`}>
               <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm h-full flex flex-col">
                   <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-50 dark:border-gray-700">
                       <h3 className="font-black text-gray-800 dark:text-white text-sm flex items-center gap-2"><RefreshCw size={16} className="text-purple-500"/> Abos / Fix</h3>
@@ -1268,7 +1268,7 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
       )}
       {/* RECEIPT VIEWER MODAL */}
       {(viewingReceiptSrc || isConvertingReceipt || receiptError) && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={closeReceiptModal}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={closeReceiptModal}>
               <div className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center justify-center" onClick={e => e.stopPropagation()}>
                   
                   <button onClick={closeReceiptModal} className="absolute -top-12 right-0 p-2 text-white hover:bg-white/10 rounded-full transition-colors">
