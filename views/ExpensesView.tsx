@@ -28,7 +28,8 @@ import {
   Target,
   Split,
   ArrowRight,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ShieldAlert
 } from 'lucide-react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -568,9 +569,22 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
                       setViewingReceiptSrc(URL.createObjectURL(jpgBlob));
                   } else { setViewingReceiptSrc(URL.createObjectURL(blob)); }
                   setStatusMessage(null);
-              } catch (e) { setReceiptError("Fehler beim Anzeigen."); setStatusMessage(null); }
-          } else { setReceiptError("Datei nicht gefunden."); setStatusMessage(null); }
-      } catch (err: any) { setReceiptError("Fehler: " + err.message); setStatusMessage(null); }
+                  setIsConvertingReceipt(false);
+              } catch (e) { 
+                  setReceiptError("Fehler beim Anzeigen."); 
+                  setStatusMessage(null); 
+                  setIsConvertingReceipt(false);
+              }
+          } else { 
+              setReceiptError("Datei nicht gefunden."); 
+              setStatusMessage(null); 
+              setIsConvertingReceipt(false);
+          }
+      } catch (err: any) { 
+          setReceiptError("Fehler: " + err.message); 
+          setStatusMessage(null); 
+          setIsConvertingReceipt(false);
+      }
   };
 
   const closeReceiptModal = () => { if (viewingReceiptSrc) URL.revokeObjectURL(viewingReceiptSrc); setViewingReceiptBlob(null); setViewingReceiptSrc(null); setReceiptError(null); setStatusMessage(null); setIsConvertingReceipt(false); };
@@ -1251,6 +1265,44 @@ const ExpensesView: React.FC<Props> = ({ data, onUpdate, globalYear }) => {
             </div>
           </div>
         </div>
+      )}
+      {/* RECEIPT VIEWER MODAL */}
+      {(viewingReceiptSrc || isConvertingReceipt || receiptError) && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={closeReceiptModal}>
+              <div className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center justify-center" onClick={e => e.stopPropagation()}>
+                  
+                  <button onClick={closeReceiptModal} className="absolute -top-12 right-0 p-2 text-white hover:bg-white/10 rounded-full transition-colors">
+                      <X size={24}/>
+                  </button>
+
+                  {isConvertingReceipt && (
+                      <div className="bg-white p-8 rounded-2xl flex flex-col items-center gap-4 shadow-2xl">
+                          <Loader2 size={48} className="text-blue-600 animate-spin"/>
+                          <p className="font-bold text-gray-600">{statusMessage || "Lade Beleg..."}</p>
+                      </div>
+                  )}
+
+                  {receiptError && (
+                      <div className="bg-white p-8 rounded-2xl flex flex-col items-center gap-4 shadow-2xl max-w-sm text-center">
+                          <div className="p-4 bg-red-50 text-red-500 rounded-full"><ShieldAlert size={32}/></div>
+                          <h3 className="font-black text-xl text-gray-800">Fehler</h3>
+                          <p className="text-gray-500 text-sm">{receiptError}</p>
+                          <button onClick={closeReceiptModal} className="px-6 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-sm text-gray-600">Schließen</button>
+                      </div>
+                  )}
+
+                  {viewingReceiptSrc && !isConvertingReceipt && (
+                      <div className="relative rounded-lg overflow-hidden shadow-2xl bg-black">
+                          <img src={viewingReceiptSrc} alt="Beleg" className="max-h-[85vh] w-auto object-contain" />
+                          <div className="absolute bottom-4 right-4 flex gap-2">
+                              <button onClick={handleShare} className="p-3 bg-white/90 hover:bg-white text-gray-800 rounded-xl shadow-lg backdrop-blur-sm transition-all font-bold text-xs flex items-center gap-2">
+                                  <Share2 size={16}/> Teilen
+                              </button>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
       )}
       
     </div>
