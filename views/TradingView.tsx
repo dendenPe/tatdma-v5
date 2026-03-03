@@ -318,16 +318,16 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-24" onPaste={handlePaste}>
       {/* HEADER WITH NAVIGATION */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
          <div className="flex items-center gap-4">
-            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
+            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 transition-colors">
                 <ChevronLeft size={24} />
             </button>
             <div className="flex flex-col items-center">
-                <h2 className="text-xl font-black text-gray-800 tracking-tight">{dayDisplay}</h2>
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{dayName}</span>
+                <h2 className="text-xl font-black text-gray-800 dark:text-white tracking-tight">{dayDisplay}</h2>
+                <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">{dayName}</span>
             </div>
-            <button onClick={() => changeDate(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors">
+            <button onClick={() => changeDate(1)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 transition-colors">
                 <ChevronRight size={24} />
             </button>
          </div>
@@ -343,7 +343,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                             dateInputRef.current?.focus();
                         }
                     }}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-lg text-xs font-bold border border-gray-200 transition-all cursor-pointer"
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-200 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-600 transition-all cursor-pointer"
                  >
                     <CalendarIcon size={16} /> Datum
                  </button>
@@ -361,7 +361,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
              {currentDate !== new Date().toISOString().split('T')[0] && (
                  <button 
                     onClick={() => setCurrentDate(new Date().toISOString().split('T')[0])}
-                    className="px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold border border-blue-100 hover:bg-blue-100 transition-all"
+                    className="px-3 py-2 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold border border-blue-100 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all"
                  >
                     Heute
                  </button>
@@ -371,36 +371,36 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-[#f8f9fa] border-b border-gray-100 p-4 flex items-center justify-between">
-              <h3 className="font-bold text-gray-700 flex items-center gap-2">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+            <div className="bg-[#f8f9fa] dark:bg-gray-900 border-b border-gray-100 dark:border-gray-700 p-4 flex items-center justify-between">
+              <h3 className="font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
                 <FileText size={18} className="text-blue-500" />
                 Journal Einträge
               </h3>
               {entry.trades.length > 0 && (
-                  <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-bold">{entry.trades.length} Trades</span>
+                  <span className="text-[10px] bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full font-bold">{entry.trades.length} Trades</span>
               )}
             </div>
             
             <div className="p-6 space-y-4">
               
               {/* NEW BREAKDOWN SUMMARY CARD */}
-              <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200">
-                  <div className="text-center p-2 border-r border-gray-200">
-                      <p className="text-[9px] font-bold text-gray-400 uppercase">Brutto PnL</p>
-                      <p className={`text-sm font-black ${grossTotal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className="grid grid-cols-3 gap-2 bg-gray-50 dark:bg-gray-900 p-2 rounded-xl border border-gray-200 dark:border-gray-700">
+                  <div className="text-center p-2 border-r border-gray-200 dark:border-gray-700">
+                      <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase">Brutto PnL</p>
+                      <p className={`text-sm font-black ${grossTotal >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                           {grossTotal.toFixed(2)}
                       </p>
                   </div>
-                  <div className="text-center p-2 border-r border-gray-200">
-                      <p className="text-[9px] font-bold text-gray-400 uppercase">Kommissionen</p>
-                      <p className="text-sm font-black text-red-500">
+                  <div className="text-center p-2 border-r border-gray-200 dark:border-gray-700">
+                      <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase">Kommissionen</p>
+                      <p className="text-sm font-black text-red-500 dark:text-red-400">
                           -{(entry.fees || 0).toFixed(2)}
                       </p>
                   </div>
-                  <div className="text-center p-2 bg-white rounded-lg border border-gray-100 shadow-sm">
-                      <p className="text-[9px] font-bold text-blue-500 uppercase">Netto PnL</p>
-                      <p className={`text-lg font-black ${entry.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <div className="text-center p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 shadow-sm">
+                      <p className="text-[9px] font-bold text-blue-500 dark:text-blue-400 uppercase">Netto PnL</p>
+                      <p className={`text-lg font-black ${entry.total >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                           {entry.total.toFixed(2)} $
                       </p>
                   </div>
@@ -408,23 +408,23 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Einzel-Trades</label>
+                  <label className="text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider">Einzel-Trades</label>
                   <div className="flex gap-2">
-                    <button onClick={copyPreviousDay} className="text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 px-2 py-1 rounded-md" title="Setup vom letzten Tag kopieren">
+                    <button onClick={copyPreviousDay} className="text-gray-400 hover:text-blue-600 dark:text-gray-500 dark:hover:text-blue-400 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-md" title="Setup vom letzten Tag kopieren">
                         <Copy size={12} /> Copy Prev
                     </button>
-                    <label className="cursor-pointer text-gray-400 hover:text-blue-600 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 px-2 py-1 rounded-md">
+                    <label className="cursor-pointer text-gray-400 hover:text-blue-600 dark:text-gray-500 dark:hover:text-blue-400 text-xs font-bold flex items-center gap-1 transition-colors bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded-md">
                         <Upload size={12} /> Import
                         <input type="file" className="hidden" accept=".csv, .txt" onChange={handleTradeImport} />
                     </label>
-                    <button onClick={addTrade} className="text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 transition-colors">
+                    <button onClick={addTrade} className="text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1 transition-colors">
                         <Plus size={14} /> Neu
                     </button>
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  <div className="grid grid-cols-12 gap-2 px-2 text-[9px] font-black text-gray-400 uppercase tracking-wider">
+                  <div className="grid grid-cols-12 gap-2 px-2 text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                      <div className="col-span-2">PnL</div>
                      <div className="col-span-1">Fee</div>
                      <div className="col-span-2">Inst</div>
@@ -433,14 +433,13 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                      <div className="col-span-1"></div>
                   </div>
                   {entry.trades.map((trade, idx) => (
-                    <div key={idx} className="p-3 bg-gray-50 rounded-xl border border-gray-100 grid grid-cols-12 gap-2 items-center animate-in fade-in slide-in-from-top-1">
+                    <div key={idx} className="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 grid grid-cols-12 gap-2 items-center animate-in fade-in slide-in-from-top-1">
                       <div className="col-span-2">
                         <input 
                           type="number"
                           value={trade.pnl}
                           onChange={(e) => updateTrade(idx, 'pnl', parseFloat(e.target.value))}
-                          style={{ colorScheme: 'light' }}
-                          className={`w-full bg-white border border-gray-200 rounded p-1.5 text-sm font-bold shadow-sm focus:ring-1 focus:ring-blue-100 outline-none ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                          className={`w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-sm font-bold shadow-sm focus:ring-1 focus:ring-blue-100 outline-none ${trade.pnl >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
                           placeholder="PnL"
                         />
                       </div>
@@ -449,8 +448,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           type="number"
                           value={trade.fee || 0}
                           onChange={(e) => updateTrade(idx, 'fee', parseFloat(e.target.value))}
-                          style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-1.5 text-xs font-medium text-red-400 shadow-sm focus:ring-1 focus:ring-red-100 outline-none"
+                          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-xs font-medium text-red-400 dark:text-red-300 shadow-sm focus:ring-1 focus:ring-red-100 outline-none"
                           placeholder="Fee"
                         />
                       </div>
@@ -459,15 +457,14 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           type="text"
                           value={trade.inst}
                           onChange={(e) => updateTrade(idx, 'inst', e.target.value)}
-                          style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-1.5 text-xs font-bold uppercase text-blue-600 shadow-sm focus:ring-1 focus:ring-blue-100 outline-none"
+                          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-xs font-bold uppercase text-blue-600 dark:text-blue-400 shadow-sm focus:ring-1 focus:ring-blue-100 outline-none"
                         />
                       </div>
                       <div className="col-span-3">
                           <select 
                             value={trade.strategy || 'Day-Trade'}
                             onChange={(e) => updateTrade(idx, 'strategy', e.target.value)}
-                            className="w-full bg-white border border-gray-200 rounded p-1.5 text-[10px] font-bold shadow-sm outline-none cursor-pointer"
+                            className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1.5 text-[10px] font-bold shadow-sm outline-none cursor-pointer dark:text-gray-200"
                           >
                               <option value="Long-Reversal">L-Rev</option>
                               <option value="Short-Reversal">S-Rev</option>
@@ -483,26 +480,24 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
                           type="time" 
                           value={trade.start} 
                           onChange={(e) => updateTrade(idx, 'start', e.target.value)}
-                          style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-1 text-[10px] shadow-sm outline-none" 
+                          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1 text-[10px] shadow-sm outline-none dark:text-gray-200" 
                         />
                         <input 
                           type="time" 
                           value={trade.end} 
                           onChange={(e) => updateTrade(idx, 'end', e.target.value)}
-                          style={{ colorScheme: 'light' }}
-                          className="w-full bg-white border border-gray-200 rounded p-1 text-[10px] shadow-sm outline-none" 
+                          className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded p-1 text-[10px] shadow-sm outline-none dark:text-gray-200" 
                         />
                       </div>
                       <div className="col-span-1 flex justify-end">
-                        <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500 p-1 transition-colors">
+                        <button onClick={() => removeTrade(idx)} className="text-gray-300 hover:text-red-500 dark:text-gray-600 dark:hover:text-red-400 p-1 transition-colors">
                           <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
                   ))}
                   {entry.trades.length === 0 && (
-                    <div className="text-center py-8 text-gray-400 italic text-sm">
+                    <div className="text-center py-8 text-gray-400 dark:text-gray-600 italic text-sm">
                       Keine Trades an diesem Tag
                     </div>
                   )}
@@ -511,22 +506,21 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-3">
-             <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Tagesnotizen</label>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 space-y-3">
+             <label className="text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider">Tagesnotizen</label>
              <textarea 
                value={entry.note}
                onChange={(e) => setEntry({ ...entry, note: e.target.value })}
                rows={6}
-               style={{ colorScheme: 'light' }}
-               className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+               className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
                placeholder="Marktbedingungen, Strategie-Check, Gefühlszustand..."
              />
           </div>
         </div>
 
         <div className="space-y-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h4 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+            <h4 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
               <ImageIcon size={16} className="text-purple-500" />
               Screenshots
             </h4>
@@ -534,7 +528,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
               {/* Clickable Upload Area */}
               <div 
                 onClick={() => fileInputRef.current?.click()}
-                className="aspect-square border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-all cursor-pointer bg-gray-50 active:scale-95"
+                className="aspect-square border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 hover:border-blue-400 hover:text-blue-500 transition-all cursor-pointer bg-gray-50 dark:bg-gray-900 active:scale-95"
               >
                 <input 
                     type="file" 
@@ -554,7 +548,7 @@ const TradingView: React.FC<Props> = ({ data, onUpdate }) => {
               {entry.screenshots && entry.screenshots.length > 0 && (
                   <div className="grid grid-cols-2 gap-2 mt-4">
                       {entry.screenshots.map((id) => (
-                          <div key={id} className="relative group aspect-video rounded-lg overflow-hidden border border-gray-200 shadow-sm bg-gray-100">
+                          <div key={id} className="relative group aspect-video rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm bg-gray-100 dark:bg-gray-800">
                               <img src={screenshotPreviews[id]} alt="Screenshot" className="w-full h-full object-cover" />
                               <button 
                                   onClick={(e) => { e.stopPropagation(); removeScreenshot(id); }}

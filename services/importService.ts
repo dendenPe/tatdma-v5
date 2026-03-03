@@ -1,4 +1,3 @@
-
 import { PortfolioYear, PortfolioPosition, DayEntry, Trade, SalaryEntry, AppData, TaxExpense } from '../types';
 
 export class ImportService {
@@ -220,11 +219,36 @@ export class ImportService {
       // --- 3. SORT BY TIME ---
       executions.sort((a, b) => a.dateTime - b.dateTime);
 
+      // --- 3b. AGGREGATE SPLIT EXECUTIONS ---
+      // Brokers sometimes split a single order into multiple rows with the same
+      // symbol, side, price and timestamp (e.g. 3 MES + 1 MES + 1 MES = 5 MES).
+      // Merge them into one execution so FIFO produces clean round-trip trades.
+      const aggregated: RawExec[] = [];
+      for (const exec of executions) {
+          const existing = aggregated.find(e =>
+              e.symbol === exec.symbol &&
+              e.side === exec.side &&
+              e.date === exec.date &&
+              e.time === exec.time &&
+              e.price === exec.price   // same fill price → same order
+          );
+          if (existing) {
+              // Accumulate qty, fees and net amount
+              const newQty = existing.qty + exec.qty;
+              existing.fee += exec.fee;
+              existing.netAmount += exec.netAmount;
+              existing.qty = newQty;
+              existing.unitFee = existing.fee / newQty; // recalc unit fee
+          } else {
+              aggregated.push({ ...exec });
+          }
+      }
+
       // --- 4. FIFO MATCHING ---
       const inventory: Record<string, RawExec[]> = {};
       const completedTrades: (Trade & { date: string })[] = [];
 
-      for (const exec of executions) {
+      for (const exec of aggregated) {   // <-- uses aggregated, not executions
           if (!inventory[exec.symbol]) inventory[exec.symbol] = [];
           const queue = inventory[exec.symbol];
 
@@ -263,11 +287,8 @@ export class ImportService {
                   const grossPnL = priceDiff * matchQty * multiplier * direction;
                   
                   // Fee Calculation (Roundturn)
-                  // Closing Fee Part:
                   const closingFeePart = exec.unitFee * matchQty;
-                  // Opening Fee Part:
                   const openingFeePart = openExec.unitFee * matchQty;
-                  
                   const totalRoundturnFee = closingFeePart + openingFeePart;
 
                   // Prepend asset class to symbol if Future detected
@@ -278,7 +299,7 @@ export class ImportService {
                   else if (multiplier === 2) displaySymbol = "MNQ " + displaySymbol;
 
                   const trade: Trade & { date: string } = {
-                      date: exec.date, // Trade date is closing date
+                      date: exec.date,
                       inst: displaySymbol,
                       qty: parseFloat(matchQty.toFixed(4)), 
                       pnl: parseFloat(grossPnL.toFixed(2)), 
@@ -303,9 +324,9 @@ export class ImportService {
                   const remainderExec: RawExec = {
                       ...exec,
                       qty: remainingQty,
-                      fee: exec.unitFee * remainingQty, // Recalc total fee for remainder
-                      unitFee: exec.unitFee, // Unit fee stays same
-                      netAmount: (exec.netAmount / exec.qty) * remainingQty // Pro-rate net amount
+                      fee: exec.unitFee * remainingQty,
+                      unitFee: exec.unitFee,
+                      netAmount: (exec.netAmount / exec.qty) * remainingQty
                   };
                   queue.push(remainderExec);
               }
@@ -443,17 +464,16 @@ export class ImportService {
 
       let posHeader: Record<string, number> = {};
       let realHeader: Record<string, number> = {}; 
-      let forexHeader: Record<string, number> = {}; // Header map for fallback exchange rates
-      let mtmHeader: Record<string, number> = {};   // Header map for MtM (another fallback)
+      let forexHeader: Record<string, number> = {};
+      let mtmHeader: Record<string, number> = {};
       let inOpenPositions = false;
       
-      // Scan rows
       for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
           const section = row[0] ? row[0].trim() : ''; 
           const type = row[1] ? row[1].trim() : ''; 
 
-          // 1. OPEN POSITIONS (Offene Positionen)
+          // 1. OPEN POSITIONS
           if (section === 'Offene Positionen') {
               if (type === 'Header') {
                   row.forEach((col, idx) => {
@@ -495,7 +515,7 @@ export class ImportService {
               }
           }
 
-          // 2. REALIZED PnL (Closed/Sold Positions)
+          // 2. REALIZED PnL
           if (section.includes('realisierten') && section.includes('Performance')) {
               if (type === 'Header') {
                   row.forEach((col, idx) => {
@@ -535,7 +555,7 @@ export class ImportService {
               }
           }
 
-          // 3. CASH (Cash-Bericht)
+          // 3. CASH
           if (section === 'Cash-Bericht') {
               if (type === 'Data') {
                   const label = row[2]; 
@@ -576,7 +596,7 @@ export class ImportService {
               }
           }
 
-          // 6. EXCHANGE RATES (Direct Table)
+          // 6. EXCHANGE RATES
           if (section === 'Wechselkurse' || section === 'Exchange Rates') {
               if (type === 'Data') {
                   const fromCurr = row[2];
@@ -590,31 +610,23 @@ export class ImportService {
           }
 
           // 7. FALLBACK: EXCHANGE RATES FROM "Devisenpositionen"
-          // If explicit table is missing, try to infer rates from Forex Positions
           if (section === 'Devisenpositionen' || section === 'Forex Positions') {
               if (type === 'Header') {
                   row.forEach((col, idx) => forexHeader[col.toLowerCase()] = idx);
               } else if (type === 'Data') {
-                  // Find indices dynamically
-                  let symIdx = forexHeader['beschreibung']; // Often Description is the Symbol e.g. CHF
+                  let symIdx = forexHeader['beschreibung'];
                   if (symIdx === undefined) symIdx = forexHeader['symbol'];
                   if (symIdx === undefined) symIdx = forexHeader['description'];
 
-                  // Close price is usually "Schlusskurs"
                   let closeIdx = forexHeader['schlusskurs'];
                   if (closeIdx === undefined) closeIdx = forexHeader['close price'];
 
                   if (symIdx !== undefined && closeIdx !== undefined) {
-                      const sym = row[symIdx]; // e.g. CHF
-                      const rate = this.parseNum(row[closeIdx]); // e.g. 1.3015 (Price of CHF in Base Currency USD)
+                      const sym = row[symIdx];
+                      const rate = this.parseNum(row[closeIdx]);
                       
-                      // Check if it's a valid currency code (3 letters) and not USD itself
                       if (sym && sym.length === 3 && sym !== 'USD' && rate > 0) {
-                          // The report usually gives price of Foreign Currency in Base Currency (USD)
-                          // So 1 CHF = 1.3015 USD => Rate is CHF_USD
                           yearData.exchangeRates[`${sym}_USD`] = rate;
-                          
-                          // Also store the inverse which app uses for display: USD_CHF = 1 / 1.3015
                           yearData.exchangeRates[`USD_${sym}`] = 1 / rate;
                       }
                   }
@@ -622,7 +634,6 @@ export class ImportService {
           }
           
           // 8. FALLBACK 2: EXCHANGE RATES FROM "Mark-to-Market"
-          // Sometimes "Devisenpositionen" is empty but MtM has it
           if (section.startsWith('Mark-to-Market')) {
               if (type === 'Header') {
                   row.forEach((col, idx) => mtmHeader[col.toLowerCase()] = idx);
@@ -632,7 +643,7 @@ export class ImportService {
                   if (cat === 'Devisen' || cat === 'Forex') {
                       const symIdx = mtmHeader['symbol'];
                       const sym = row[symIdx];
-                      const closeIdx = mtmHeader['aktuell kurs']; // Current Price
+                      const closeIdx = mtmHeader['aktuell kurs'];
                       
                       if (sym && sym.length === 3 && sym !== 'USD' && closeIdx !== undefined) {
                           const rate = this.parseNum(row[closeIdx]);
